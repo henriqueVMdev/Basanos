@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="basanos">
+  <g fill="#f5c518">
+    <path fill-rule="evenodd" d="M53,28 a31,31 0 1,0 0,62 a31,31 0 1,0 0,-62 Z M53,41 a18,18 0 1,1 0,36 a18,18 0 1,1 0,-36 Z"/>
+    <rect x="28" y="18" width="14" height="52" rx="7"/>
+    <polygon points="35,80 57,80 45,99"/>
+    <rect x="42" y="61" width="6" height="8" rx="2.5"/>
+    <rect x="50" y="55" width="6" height="14" rx="2.5"/>
+    <rect x="58" y="48" width="6" height="21" rx="2.5"/>
+  </g>
+</svg>
