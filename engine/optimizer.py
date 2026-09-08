@@ -4,11 +4,10 @@ Otimizador de Parâmetros — Estratégia DePaula v2
 Testa múltiplas combinações de parâmetros e rankeia pelos melhores resultados.
 
 Uso:
-    python optimizer.py                              # otimiza com dados BTCUSDT
-    python optimizer.py --csv dados.csv              # usa CSV local
-    python optimizer.py --symbol BTCUSDT --top 20    # mostra top 20 resultados
-    python optimizer.py --mode rapido                # grid menor (mais rápido)
-    python optimizer.py --mode completo              # grid maior (mais lento)
+    python -m engine.optimizer                            # dados BTCUSDT
+    python -m engine.optimizer --csv dados.csv            # CSV local
+    python -m engine.optimizer --symbol BTCUSDT --top 20  # top 20 resultados
+    python -m engine.optimizer --mode rapido|completo     # tamanho da grade
 """
 
 import itertools
@@ -111,48 +110,31 @@ def generate_configs(grid: Dict[str, List], base_cfg: Config) -> List[Config]:
     return configs
 
 
+# Parâmetro que cada modo de stop/saída realmente usa; os demais ficam no default
+_STOP_PARAM = {"ATR": "stop_atr_mult", "Fixo (%)": "stop_fixo_pct",
+               "Banda Stop": "stop_band_pct"}
+_DEFAULTS = {"stop_type": "ATR", "stop_atr_mult": 2.0, "stop_fixo_pct": 2.0,
+             "stop_band_pct": 1.5, "pct_up": 3.0, "alvo_fixo": 5.0}
+
+
 def _is_valid(params: dict) -> bool:
-    """Remove combinações que não fazem sentido."""
+    """Descarta combinações redundantes: parâmetro inativo só vale no default."""
 
-    # Se stop está desligado, não precisa testar variações de stop
-    if not params.get("use_stop", False):
-        if params.get("stop_type", "ATR") != "ATR":
-            return False
-        if params.get("stop_atr_mult", 2.0) != 2.0:
-            return False
-        if params.get("stop_fixo_pct", 2.0) != 2.0:
-            return False
-        if params.get("stop_band_pct", 1.5) != 1.5:
-            return False
+    def at_default(key):
+        return params.get(key, _DEFAULTS[key]) == _DEFAULTS[key]
 
-    # Se stop é ATR, não varia fixo/banda
-    stop_type = params.get("stop_type", "ATR")
-    if params.get("use_stop", False):
-        if stop_type != "ATR" and params.get("stop_atr_mult", 2.0) != 2.0:
-            return False
-        if stop_type != "Fixo (%)" and params.get("stop_fixo_pct", 2.0) != 2.0:
-            return False
-        if stop_type != "Banda Stop" and params.get("stop_band_pct", 1.5) != 1.5:
-            return False
+    use_stop = params.get("use_stop", False)
+    if not use_stop and not at_default("stop_type"):
+        return False
+    active = _STOP_PARAM.get(params.get("stop_type", "ATR")) if use_stop else None
+    if any(k != active and not at_default(k) for k in _STOP_PARAM.values()):
+        return False
 
-    # Se saída é "Somente Tendência", não varia pct/alvo
     exit_mode = params.get("exit_mode", "Banda + Tendência")
-    if exit_mode == "Somente Tendência":
-        if params.get("pct_up", 3.0) != 3.0:
-            return False
-        if params.get("alvo_fixo", 5.0) != 5.0:
-            return False
-
-    # Se saída é "Banda", não varia alvo fixo
-    if exit_mode == "Banda + Tendência":
-        if params.get("alvo_fixo", 5.0) != 5.0:
-            return False
-
-    # Se saída é "Alvo Fixo", não varia banda
-    if exit_mode == "Alvo Fixo + Tendência":
-        if params.get("pct_up", 3.0) != 3.0:
-            return False
-
+    if exit_mode != "Banda + Tendência" and not at_default("pct_up"):
+        return False
+    if exit_mode != "Alvo Fixo + Tendência" and not at_default("alvo_fixo"):
+        return False
     return True
 
 
@@ -182,7 +164,7 @@ def calc_metrics(st: BacktestState, cfg: Config) -> Dict[str, Any]:
     # Periodo total em dias (usado para anualizacao)
     total_days = max((st._df.index[-1] - st._df.index[0]).days, 1) if len(st._df) > 1 else 1
 
-    # Sharpe from equity curve returns (annualized, ddof=1)
+    # Sharpe sobre os retornos da curva de equity (anualizado, ddof=1)
     bars_per_year = len(eq) / (total_days / 365.25) if total_days > 0 else 252
     sharpe = 0.0
     if len(eq) > 2:
@@ -273,6 +255,7 @@ def optimize(df: pd.DataFrame, grid: Dict, base_cfg: Config, rank_by: str = "Sco
         print(f"  AVISO: {total} combinações — pode demorar ~{total * 0.05:.0f}s")
 
     results = []
+    failed = 0
     t0 = time.time()
     last_print = t0
 
@@ -283,7 +266,7 @@ def optimize(df: pd.DataFrame, grid: Dict, base_cfg: Config, rank_by: str = "Sco
             if metrics and metrics["Trades"] >= 5:  # Mínimo 5 trades
                 results.append(metrics)
         except Exception:
-            pass
+            failed += 1   # config quebrada não para a grade, mas é contada
 
         # Progresso
         now = time.time()
@@ -297,7 +280,8 @@ def optimize(df: pd.DataFrame, grid: Dict, base_cfg: Config, rank_by: str = "Sco
             last_print = now
 
     elapsed = time.time() - t0
-    print(f"\n  Concluído em {elapsed:.1f}s | {len(results)} configurações válidas\n")
+    print(f"\n  Concluído em {elapsed:.1f}s | {len(results)} configurações válidas"
+          + (f" | {failed} falharam\n" if failed else "\n"))
 
     if not results:
         print("  Nenhum resultado válido encontrado.")

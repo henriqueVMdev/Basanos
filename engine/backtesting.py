@@ -306,6 +306,19 @@ def brt_hour(ts) -> int:
     return (ts.hour - 3) % 24
 
 
+def _bar_index(idx):
+    """Pré-calcula (datas, meses, horas BRT, epoch ms) do índice das barras."""
+    dates = [str(x) for x in idx]
+    if not isinstance(idx, pd.DatetimeIndex):
+        zeros = [0] * len(idx)
+        return dates, [1] * len(idx), zeros, zeros
+    local = idx.tz_convert("America/Sao_Paulo") if idx.tz is not None \
+        else idx - pd.Timedelta(hours=3)
+    # as_unit("ns"): o índice pode ser datetime64[us/ms] e asi8 segue a unidade
+    ts_ms = (idx.as_unit("ns").asi8 // 1_000_000).tolist()
+    return dates, idx.month.tolist(), local.hour.tolist(), ts_ms
+
+
 def run_backtest(df: pd.DataFrame, cfg: Config) -> BacktestState:
     """Executa o backtest barra a barra, replicando a lógica do Pine Script."""
 
@@ -323,31 +336,33 @@ def run_backtest(df: pd.DataFrame, cfg: Config) -> BacktestState:
 
     equity_curve = []
 
+    # df.iloc[i] por barra domina o custo do loop (o optimizer roda isto
+    # milhares de vezes): extrai as colunas uma vez e itera sobre arrays.
+    col = {name: df[name].to_numpy() for name in
+           ("Close", "High", "Low", "MA", "ATR", "UpperBand", "LowerBand",
+            "StopUpperBand", "StopLowerBand", "PartialUpperBand",
+            "PartialLowerBand", "State", "PrevState", "InEntryZone")}
+    dates, months, hours, ts_ms = _bar_index(df.index)
+
     for i in range(len(df)):
-        row = df.iloc[i]
-        date = str(df.index[i])
-        idx_i = df.index[i]
-        bar_month = idx_i.month if hasattr(idx_i, 'month') else 1
-        bar_hour = brt_hour(idx_i)  # hora de Brasília (UI usa horário BRT)
-        # epoch ms da barra (usado para custos/funding)
-        try:
-            st._ts = int(idx_i.value // 1_000_000)
-        except AttributeError:
-            st._ts = 0
-        close = row["Close"]
-        high = row["High"]
-        low = row["Low"]
-        state = int(row["State"])
-        prev_state = int(row["PrevState"])
-        ma_val = row["MA"]
-        atr_val = row["ATR"]
-        upper_band = row["UpperBand"]
-        lower_band = row["LowerBand"]
-        stop_upper = row["StopUpperBand"]
-        stop_lower = row["StopLowerBand"]
-        partial_upper = row["PartialUpperBand"]
-        partial_lower = row["PartialLowerBand"]
-        in_entry_zone = bool(row["InEntryZone"])
+        date = dates[i]
+        bar_month = months[i]
+        bar_hour = hours[i]          # hora de Brasília (UI usa horário BRT)
+        st._ts = ts_ms[i]            # epoch ms da barra (usado em custos/funding)
+        close = col["Close"][i]
+        high = col["High"][i]
+        low = col["Low"][i]
+        state = int(col["State"][i])
+        prev_state = int(col["PrevState"][i])
+        ma_val = col["MA"][i]
+        atr_val = col["ATR"][i]
+        upper_band = col["UpperBand"][i]
+        lower_band = col["LowerBand"][i]
+        stop_upper = col["StopUpperBand"][i]
+        stop_lower = col["StopLowerBand"][i]
+        partial_upper = col["PartialUpperBand"][i]
+        partial_lower = col["PartialLowerBand"][i]
+        in_entry_zone = bool(col["InEntryZone"][i])
 
         if np.isnan(ma_val) or np.isnan(atr_val):
             equity_curve.append(st.equity)
@@ -520,7 +535,7 @@ def run_backtest(df: pd.DataFrame, cfg: Config) -> BacktestState:
 
     # Fecha posição aberta no final
     if st.position != 0 and len(df) > 0:
-        _close_position(st, str(df.index[-1]), df.iloc[-1]["Close"], "Fim do Período")
+        _close_position(st, dates[-1], col["Close"][-1], "Fim do Período")
 
     df["Equity"] = equity_curve[:len(df)]
     st._df = df

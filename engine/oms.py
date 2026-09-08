@@ -30,11 +30,10 @@ import time
 import uuid
 from pathlib import Path
 
-_FILE = Path(__file__).parents[1] / "data" / "oms_data.json"
-_lock = threading.Lock()
-
 from common import ttl_cache, to_float
 
+_FILE = Path(__file__).parents[1] / "data" / "oms_data.json"
+_lock = threading.Lock()
 _cached = ttl_cache()
 
 

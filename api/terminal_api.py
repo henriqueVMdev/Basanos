@@ -19,13 +19,10 @@ from urllib.request import Request, urlopen
 
 from flask import Blueprint, jsonify, request
 
+from common import ttl_cache, to_float
 from providers.market_data import get_exchange, normalize_symbol
 
 terminal_bp = Blueprint("terminal", __name__, url_prefix="/api/terminal")
-
-# cache TTL genérico
-from common import ttl_cache, to_float
-
 _cached = ttl_cache()
 
 

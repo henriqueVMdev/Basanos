@@ -73,9 +73,10 @@ def _forward(log_lik, log_trans, log_start, n_states):
     log_scale[0] = np.logaddexp.reduce(log_alpha[0])
     log_alpha[0] -= log_scale[0]
 
+    # t é sequencial; os estados saem num reduce só
     for t in range(1, T):
-        for j in range(n_states):
-            log_alpha[t, j] = np.logaddexp.reduce(log_alpha[t - 1] + log_trans[:, j]) + log_lik[t, j]
+        log_alpha[t] = np.logaddexp.reduce(
+            log_alpha[t - 1][:, None] + log_trans, axis=0) + log_lik[t]
         log_scale[t] = np.logaddexp.reduce(log_alpha[t])
         log_alpha[t] -= log_scale[t]
 
@@ -89,10 +90,8 @@ def _backward(log_lik, log_trans, log_scale, n_states):
     log_beta[-1] = 0.0  # log(1)
 
     for t in range(T - 2, -1, -1):
-        for j in range(n_states):
-            log_beta[t, j] = np.logaddexp.reduce(
-                log_trans[j, :] + log_lik[t + 1] + log_beta[t + 1]
-            )
+        log_beta[t] = np.logaddexp.reduce(
+            log_trans + (log_lik[t + 1] + log_beta[t + 1])[None, :], axis=1)
         log_beta[t] -= log_scale[t + 1]
 
     return log_beta
@@ -105,7 +104,7 @@ def _fit_hmm(X: np.ndarray, n_states: int, n_iter: int = 50, tol: float = 1e-4):
     """
     T, D = X.shape
 
-    # ── Inicializacao via K-Means ──
+    # Inicializacao via K-Means
     from sklearn.cluster import KMeans
     kmeans = KMeans(n_clusters=n_states, n_init=10, random_state=42)
     init_labels = kmeans.fit_predict(X)
@@ -135,7 +134,7 @@ def _fit_hmm(X: np.ndarray, n_states: int, n_iter: int = 50, tol: float = 1e-4):
     prev_ll = -np.inf
 
     for iteration in range(n_iter):
-        # ── E-step ──
+        # E-step
         log_lik = _log_multivariate_normal_density(X, means, covars)
         log_trans = np.log(transmat + 1e-300)
         log_start = np.log(startprob + 1e-300)
@@ -157,19 +156,13 @@ def _fit_hmm(X: np.ndarray, n_states: int, n_iter: int = 50, tol: float = 1e-4):
         gamma = np.exp(log_gamma)
 
         # Xi (transicoes): xi[t, i, j] = P(s_t=i, s_{t+1}=j | obs)
-        xi = np.zeros((T - 1, n_states, n_states))
-        for t in range(T - 1):
-            for i in range(n_states):
-                for j in range(n_states):
-                    xi[t, i, j] = log_alpha[t, i] + log_trans[i, j] + log_lik[t + 1, j] + log_beta[t + 1, j]
-            # Normaliza
-            xi_max = xi[t].max()
-            xi[t] = np.exp(xi[t] - xi_max)
-            xi_sum = xi[t].sum()
-            if xi_sum > 0:
-                xi[t] /= xi_sum
+        xi = (log_alpha[:-1, :, None] + log_trans[None, :, :]
+              + (log_lik[1:] + log_beta[1:])[:, None, :])
+        xi = np.exp(xi - xi.max(axis=(1, 2), keepdims=True))
+        xi_sum = xi.sum(axis=(1, 2), keepdims=True)
+        xi /= np.where(xi_sum > 0, xi_sum, 1.0)
 
-        # ── M-step ──
+        # M-step
         # Startprob
         startprob = gamma[0] + 1e-10
         startprob /= startprob.sum()
@@ -193,7 +186,7 @@ def _fit_hmm(X: np.ndarray, n_states: int, n_iter: int = 50, tol: float = 1e-4):
                 weighted = diff * gamma[:, s:s+1]
                 covars[s] = (weighted.T @ diff) / gamma_sum[s] + np.eye(D) * 1e-6
 
-    # ── Viterbi para sequencia MAP ──
+    # Viterbi para sequencia MAP
     log_lik = _log_multivariate_normal_density(X, means, covars)
     log_trans = np.log(transmat + 1e-300)
     log_start = np.log(startprob + 1e-300)
@@ -202,21 +195,20 @@ def _fit_hmm(X: np.ndarray, n_states: int, n_iter: int = 50, tol: float = 1e-4):
     psi = np.zeros((T, n_states), dtype=int)
 
     delta[0] = log_start + log_lik[0]
+    cols = np.arange(n_states)
     for t in range(1, T):
-        for j in range(n_states):
-            scores = delta[t - 1] + log_trans[:, j]
-            psi[t, j] = np.argmax(scores)
-            delta[t, j] = scores[psi[t, j]] + log_lik[t, j]
+        scores = delta[t - 1][:, None] + log_trans   # (i, j)
+        psi[t] = np.argmax(scores, axis=0)
+        delta[t] = scores[psi[t], cols] + log_lik[t]
 
     states = np.zeros(T, dtype=int)
     states[-1] = np.argmax(delta[-1])
     for t in range(T - 2, -1, -1):
         states[t] = psi[t + 1, states[t + 1]]
 
-    # Posteriors finais (gamma do ultimo E-step)
-    log_lik_final = _log_multivariate_normal_density(X, means, covars)
-    log_alpha_f, log_scale_f = _forward(log_lik_final, log_trans, log_start, n_states)
-    log_beta_f = _backward(log_lik_final, log_trans, log_scale_f, n_states)
+    # Posteriors finais (reusa o log_lik ja calculado para o Viterbi)
+    log_alpha_f, log_scale_f = _forward(log_lik, log_trans, log_start, n_states)
+    log_beta_f = _backward(log_lik, log_trans, log_scale_f, n_states)
     log_gamma_f = log_alpha_f + log_beta_f
     log_gamma_f -= np.logaddexp.reduce(log_gamma_f, axis=1, keepdims=True)
     posteriors = np.exp(log_gamma_f)
