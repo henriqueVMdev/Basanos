@@ -11,7 +11,7 @@ matplotlib.use("Agg")  # non-interactive backend
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-# ─── Paleta ───────────────────────────────────────────────────────────────────
+# Paleta
 BLUE   = "#378ADD"
 GREEN  = "#1D9E75"
 RED    = "#E24B4A"
@@ -59,8 +59,7 @@ def _save(fig, name: str):
     return path
 
 
-# ─── a) Broom Chart ───────────────────────────────────────────────────────────
-
+# a) Broom Chart
 def broom_chart(mc_result: dict, n_sims: int) -> str:
     """Gráfico de vassoura: 100 equity curves simuladas + percentis + original."""
     fig, ax = _dark_fig()
@@ -91,8 +90,7 @@ def broom_chart(mc_result: dict, n_sims: int) -> str:
     return _save(fig, "broom_chart.png")
 
 
-# ─── b) Drawdown Distribution ─────────────────────────────────────────────────
-
+# b) Drawdown Distribution
 def drawdown_distribution(mc_result: dict, orig_dd: float) -> str:
     fig, ax = _dark_fig()
 
@@ -115,8 +113,7 @@ def drawdown_distribution(mc_result: dict, orig_dd: float) -> str:
     return _save(fig, "drawdown_distribution.png")
 
 
-# ─── c) Sharpe Distribution ───────────────────────────────────────────────────
-
+# c) Sharpe Distribution
 def sharpe_distribution(mc_result: dict, orig_sharpe: float) -> str:
     fig, ax = _dark_fig()
 
@@ -135,8 +132,7 @@ def sharpe_distribution(mc_result: dict, orig_sharpe: float) -> str:
     return _save(fig, "sharpe_distribution.png")
 
 
-# ─── d) Permutation Test ──────────────────────────────────────────────────────
-
+# d) Permutation Test
 def permutation_test_chart(perm_result: dict) -> str:
     fig, ax = _dark_fig()
 
@@ -172,8 +168,7 @@ def permutation_test_chart(perm_result: dict) -> str:
     return _save(fig, "permutation_test.png")
 
 
-# ─── e) Summary Dashboard (2×2) ───────────────────────────────────────────────
-
+# e) Summary Dashboard (2×2)
 def summary_dashboard(
     mc_result: dict,
     perm_result: dict,

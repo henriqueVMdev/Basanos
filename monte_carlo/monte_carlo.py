@@ -12,8 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 
-# ─── Helpers internos ──────────────────────────────────────────────────────────
-
+# Helpers internos
 def _equity_from_trades(pnls: np.ndarray, initial_capital: float) -> np.ndarray:
     """Constrói equity curve a partir de lista de PnL% por trade."""
     equity = np.empty(len(pnls) + 1)
@@ -149,8 +148,7 @@ def _build_result(
     }
 
 
-# ─── Classe principal ──────────────────────────────────────────────────────────
-
+# Classe principal
 class MonteCarlo:
     """
     Monte Carlo para validação de estratégias de trading.
@@ -168,7 +166,7 @@ class MonteCarlo:
         self.rng        = np.random.default_rng(seed)
         self.ann_factor = float(ann_factor)
 
-    # ── Método 1: Reshuffle ────────────────────────────────────────────────────
+    # Método 1: Reshuffle
     def reshuffle(self, trades: list[dict], n_sims: int = 1000) -> dict:
         """
         Embaralha a ordem dos trades (sem reposição).
@@ -192,7 +190,7 @@ class MonteCarlo:
         result["x_type"] = "trade_index"
         return result
 
-    # ── Método 2: Resample ────────────────────────────────────────────────────
+    # Método 2: Resample
     def resample(self, trades: list[dict], n_sims: int = 1000) -> dict:
         """
         Bootstrap com reposição.
@@ -216,7 +214,7 @@ class MonteCarlo:
         result["x_type"] = "trade_index"
         return result
 
-    # ── Método 3: Randomized ─────────────────────────────────────────────────
+    # Método 3: Randomized
     def randomized(
         self,
         trades: list[dict],
@@ -248,7 +246,7 @@ class MonteCarlo:
         result["noise_pct"] = noise_pct
         return result
 
-    # ── Método 4: Return Alteration ──────────────────────────────────────────
+    # Método 4: Return Alteration
     def return_alteration(
         self,
         equity_values: list[float],

@@ -3,9 +3,8 @@ import streamlit as st
 from config import COLUMN_DISPLAY
 
 
-
 def _copy_params_to_backtest(row: pd.Series):
-    """Copia parametros da estrategia selecionada para o session_state do backtesting."""
+    """Publica os parametros da linha no session_state do Backtesting Live."""
     if "ma" in row.index and pd.notna(row["ma"]):
         st.session_state["bt_ma_type"] = str(row["ma"]).upper()
 
@@ -67,7 +66,7 @@ def _copy_params_to_backtest(row: pd.Series):
 
 
 def render_strategy_detail(row: pd.Series):
-    """Exibe todos os parametros de uma estrategia selecionada."""
+    """Exibe os parametros da estrategia em tres colunas."""
     rank_label = ""
     if "rank" in row.index:
         rank_label = f" - Rank {int(row['rank'])}"

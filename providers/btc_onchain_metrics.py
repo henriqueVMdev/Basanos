@@ -1,18 +1,20 @@
-"""Bitcoin market/on-chain metrics with honest source attribution.
+"""Métricas de mercado/on-chain do BTC, com a fonte declarada em cada série.
 
-Public metrics are calculated locally. Entity-labelled metrics are requested from
-Glassnode when ``GLASSNODE_API_KEY`` is configured.  CryptoQuant-only series can
-be connected without code changes through the ``CRYPTOQUANT_*_URL`` variables.
+Métricas públicas são calculadas localmente. As que exigem rótulo de entidade
+vêm do Glassnode quando ``GLASSNODE_API_KEY`` existe. Séries exclusivas do
+CryptoQuant entram sem mudança de código via ``CRYPTOQUANT_*_URL``.
 """
 from __future__ import annotations
 
-import os
 import json
-import time
 import math
+import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
+import pandas as pd
 import requests
 
 _UA = {"User-Agent": "GraphQuantLab/1.0"}
@@ -47,8 +49,7 @@ _BD_METRICS = {
     "sth_sopr": ("sth-sopr", "sthSopr"),
 }
 _BD_LOCK = threading.Lock()
-_BD_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "data", "bitcoin_data_cache.json")
+_BD_CACHE_FILE = str(Path(__file__).parents[1] / "data" / "bitcoin_data_cache.json")
 
 
 def _bd_cache_load():
@@ -97,10 +98,10 @@ def _glassnode_or_free(key: str, path: str):
 
 
 def _configured_cq(metric_id: str):
-    """Read a CryptoQuant-compatible JSON series from a configured URL.
+    """Série JSON compatível com CryptoQuant a partir de uma URL configurada.
 
-    Accepted records: {timestamp|t|date, value|v}. This deliberately avoids
-    hard-coding private/plan-dependent CryptoQuant routes.
+    Aceita registros {timestamp|t|date, value|v}. Evita fixar rotas privadas,
+    que dependem do plano contratado.
     """
     url = os.getenv(f"CRYPTOQUANT_{metric_id.upper()}_URL", "").strip()
     if not url:
@@ -131,7 +132,7 @@ def _configured_cq(metric_id: str):
 
 
 def _pi_cycle():
-    # Binance public daily candles; fetch backwards because each page is capped at 1,000.
+    # Candles diários públicos da Binance, paginando para trás (limite de 1.000/página).
     rows, end = [], None
     for _ in range(3):
         params = {"symbol": "BTCUSDT", "interval": "1d", "limit": 1000}
@@ -146,14 +147,15 @@ def _pi_cycle():
         rows = page + rows
         end = page[0][0] - 1
     rows = sorted(dict(rows).items())
-    vals = [x[1] for x in rows]
-    def ma(i, n):
-        return sum(vals[i - n + 1:i + 1]) / n if i + 1 >= n else None
+    close = pd.Series([x[1] for x in rows])
     start = max(0, len(rows) - 2920)
-    return {"ts": [x[0] for x in rows[start:]], "price": vals[start:],
-            "dma111": [ma(i, 111) for i in range(start, len(rows))],
-            "dma350x2": [(ma(i, 350) * 2 if ma(i, 350) is not None else None)
-                         for i in range(start, len(rows))],
+
+    def tail(series):
+        return [None if v != v else float(v) for v in series.iloc[start:]]
+
+    return {"ts": [x[0] for x in rows[start:]], "price": list(close.iloc[start:]),
+            "dma111": tail(close.rolling(111).mean()),
+            "dma350x2": tail(close.rolling(350).mean() * 2),
             "source": "Binance BTCUSDT; cálculo local (111DMA e 2×350DMA)"}
 
 
@@ -175,8 +177,8 @@ def _open_interest():
                 try:
                     tickers.update(ex.fetch_tickers(group))
                 except Exception:
-                    # A missing bulk ticker only excludes affected fallbacks;
-                    # it never invents a USD conversion.
+                    # Sem ticker em lote, os fallbacks afetados são excluídos;
+                    # nunca se inventa a conversão para USD.
                     pass
             total = 0.0
             seen_ids = set()
@@ -202,9 +204,8 @@ def _open_interest():
                                 price = one_ticker.get("last") or one_ticker.get("close")
                             except Exception:
                                 pass
-                        # Unified amount is normally base-denominated for linear
-                        # contracts. Inverse fallbacks are excluded unless the
-                        # exchange provides openInterestValue in quote currency.
+                        # Em contratos lineares o amount unificado vem na moeda base.
+                        # Inversos só entram se a exchange der openInterestValue.
                         usd = (float(amount) * float(price)
                                if amount and price and market.get("linear") else None)
                     usd = float(usd) if usd is not None else None
@@ -234,12 +235,12 @@ def _open_interest():
 
 
 def _sth_sopr_mvrv_indicator(mvrv: dict, sopr: dict) -> dict:
-    """Reproduce Checkonchain's break-even oscillator transformation."""
+    """Oscilador de break-even, reproduzindo a transformação do Checkonchain."""
     mv = dict(zip(mvrv["ts"], mvrv["values"]))
     sp = dict(zip(sopr["ts"], sopr["values"]))
     ts = sorted(mv.keys() & sp.keys())
     m = [mv[t] for t in ts]
-    # The chart doubles SOPR's distance from 1 so both signals share one axis.
+    # O gráfico dobra a distância do SOPR até 1 para os dois sinais dividirem o eixo.
     s2 = [1.0 + 2.0 * (sp[t] - 1.0) for t in ts]
     return {
         "ts": ts,
@@ -257,7 +258,7 @@ def _sth_sopr_mvrv_indicator(mvrv: dict, sopr: dict) -> dict:
 
 
 def payload(ttl=900):
-    """Cached aggregate; the lock prevents duplicate cold refreshes."""
+    """Agregado com cache; o lock evita refresh frio duplicado."""
     global _PAYLOAD_CACHE
     now = time.time()
     if _PAYLOAD_CACHE and now - _PAYLOAD_CACHE[0] < ttl:

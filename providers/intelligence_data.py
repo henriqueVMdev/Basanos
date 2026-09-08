@@ -23,10 +23,12 @@ import os
 import sqlite3
 import threading
 import time
+from pathlib import Path
 
-_CACHE = {}
-_TRACK_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                         "data", "intelligence_signals.db")
+from common import ttl_cache
+
+_cached = ttl_cache()
+_TRACK_DB = str(Path(__file__).parents[1] / "data" / "intelligence_signals.db")
 
 # universo do ranking: cada classe demonstra os fatores que só ela tem
 UNIVERSE = [
@@ -141,25 +143,12 @@ _AGRI = {"KC=F": "café", "CC=F": "cacau", "SB=F": "açúcar", "ZC=F": "milho",
 
 def analyze(symbol="BTC"):
     sym = (symbol or "BTC").upper().replace("-USD", "")
-    hit = _CACHE.get(sym)
-    if hit and time.time() - hit[0] < 900:
-        return hit[1]
-    out = _full(symbol, sym)
-    _CACHE[sym] = (time.time(), out)
-    return out
-
-
-_TRACK_CACHE = None
+    return _cached(("analyze", sym), 900, lambda: _full(symbol, sym))
 
 
 def tracking(ttl=3600):
     """Auto-auditoria forward: sinais gravados × retorno realizado 7/30d."""
-    global _TRACK_CACHE
-    if _TRACK_CACHE and time.time() - _TRACK_CACHE[0] < ttl:
-        return _TRACK_CACHE[1]
-    out = _tracking()
-    _TRACK_CACHE = (time.time(), out)
-    return out
+    return _cached("tracking", ttl, _tracking)
 
 
 def _tracking():
@@ -231,14 +220,12 @@ def _tracking():
             "ts": int(time.time() * 1000)}
 
 
-_DRIVERS_CACHE = None
-
-
 def _driver_closes():
-    """Fechamentos 6m dos drivers macro (SPX, DXY, WTI, BTC) — cache 1h."""
-    global _DRIVERS_CACHE
-    if _DRIVERS_CACHE and time.time() - _DRIVERS_CACHE[0] < 3600:
-        return _DRIVERS_CACHE[1]
+    """Fechamentos 6m dos drivers macro (SPX, DXY, WTI, BTC)."""
+    return _cached("drivers", 3600, _fetch_driver_closes)
+
+
+def _fetch_driver_closes():
     import pandas as pd
     import yfinance as yf
     out = {}
@@ -251,7 +238,6 @@ def _driver_closes():
             out[name] = h
         except Exception:
             pass
-    _DRIVERS_CACHE = (time.time(), out)
     return out
 
 
@@ -298,7 +284,7 @@ def _full(raw, sym):
         factors.append(v)
         reasons.append(reason)
 
-    # ── BTC: modelo on-chain do research (já cruza on-chain × técnica) ──
+    # BTC: modelo on-chain do research (já cruza on-chain × técnica)
     if is_btc:
         try:
             from providers.btc_onchain_metrics import payload
@@ -351,7 +337,7 @@ def _full(raw, sym):
         except Exception as e:
             source("On-chain BTC", "error", e)
 
-    # ── técnica (yfinance) — para BTC o research já vota; aqui só contexto ──
+    # técnica (yfinance) — para BTC o research já vota; aqui só contexto
     try:
         h = yf.Ticker(yf_sym).history(period="5y", interval="1d", auto_adjust=True)
         yclose = h["Close"].dropna()
@@ -396,7 +382,7 @@ def _full(raw, sym):
                                 "title": "Queda forte com RSI sobrevendido",
                                 "detail": f"30d {ret30:+.1f}%, RSI {rsi:.0f}"})
 
-    # ── sazonalidade do mês corrente ─────────────────────────────────────
+    # sazonalidade do mês corrente
     try:
         from providers import seasonality_data
         sea = seasonality_data.analyze(yf_sym)
@@ -424,7 +410,7 @@ def _full(raw, sym):
     except Exception as e:
         source("Sazonalidade", "error", e)
 
-    # ── macro: liquidez Fed + regime de risco (vale para qualquer ativo) ──
+    # macro: liquidez Fed + regime de risco (vale para qualquer ativo)
     try:
         from providers import liquidity_data
         liq = {r["id"]: r for r in liquidity_data.snapshot()["series"]
@@ -451,7 +437,7 @@ def _full(raw, sym):
     except Exception as e:
         source("FRED (liquidez/risco)", "error", e)
 
-    # ── cripto: funding, TVL, Fear & Greed, amplitude, top traders, dev ──
+    # cripto: funding, TVL, Fear & Greed, amplitude, top traders, dev
     if crypto:
         try:
             from providers import onchain_data
@@ -528,7 +514,7 @@ def _full(raw, sym):
         except Exception as e:
             source("Binance top traders", "error", e)
 
-    # ── ações EUA: insiders SEC; aéreas: TSA; frete: GSCPI ───────────────
+    # ações EUA: insiders SEC; aéreas: TSA; frete: GSCPI
     is_us_stock = not crypto and "." not in sym and "=" not in sym and "^" not in sym
     if is_us_stock:
         try:
@@ -648,7 +634,7 @@ def _full(raw, sym):
         except Exception as e:
             source("NY Fed GSCPI", "error", e)
 
-    # ── commodities: COT (CFTC); agrícolas: ENSO + clima ────────────────
+    # commodities: COT (CFTC); agrícolas: ENSO + clima
     if not crypto and yf_sym.endswith("=F"):
         try:
             from providers import insider_data
@@ -690,7 +676,7 @@ def _full(raw, sym):
         except Exception as e:
             source("NOAA ENSO + met.no", "error", e)
 
-    # ── drivers: com quem o ativo anda (correlação 60d) — educativo ─────
+    # drivers: com quem o ativo anda (correlação 60d) — educativo
     if close is not None:
         try:
             c2 = close.copy()
@@ -708,13 +694,13 @@ def _full(raw, sym):
                 cv = float(pair.iloc[:, 0].corr(pair.iloc[:, 1]))
                 if abs(cv) >= 0.5:
                     hits.append(f"{'junto com' if cv > 0 else 'contra'} {name} ({cv:+.2f})")
-            insights.append("drivers 60d: move " + "; ".join(hits) if hits else
-                            "drivers 60d: sem correlação dominante (|corr| < 0.5 "
-                            "com SPX/DXY/WTI/BTC) — movimento é idiossincrático")
+            insights.append(("drivers 60d: move " + "; ".join(hits)) if hits else
+                            ("drivers 60d: sem correlação dominante (|corr| < 0.5 "
+                             "com SPX/DXY/WTI/BTC) — movimento é idiossincrático"))
         except Exception:
             pass  # insight opcional
 
-    # ── consolidação ─────────────────────────────────────────────────────
+    # consolidação
     if not factors:
         raise ValueError(f"nenhuma fonte disponível para {sym}")
     score = sum(factors)

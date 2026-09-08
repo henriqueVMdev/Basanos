@@ -153,8 +153,7 @@ def _row_to_dict(row) -> dict | None:
     return d
 
 
-# ── Deployments ──────────────────────────────────────────────────────────
-
+# Deployments
 def create_deployment(name, strategy_file, params, symbol, interval, exchange,
                       mode, initial_capital, backtest_ref=None,
                       account=None, guardrails=None) -> str:
@@ -207,8 +206,7 @@ def delete_deployment(dep_id) -> None:
         con.execute("DELETE FROM deployments WHERE id=?", (dep_id,))
 
 
-# ── Orders ───────────────────────────────────────────────────────────────
-
+# Orders
 def create_order(dep_id, kind, side, type_, price, qty, valid_candle_ts,
                  tp_pct=None, sl_pct=None, max_bars=None, exposure=None,
                  exchange_order_id=None, raw=None) -> int:
@@ -239,8 +237,7 @@ def update_order(order_id, **fields) -> None:
         con.execute(f"UPDATE orders SET {cols} WHERE id=?", (*fields.values(), order_id))
 
 
-# ── Positions ────────────────────────────────────────────────────────────
-
+# Positions
 def open_position(dep_id, side, qty, exposure, entry_price, entry_candle_ts,
                   tp_price, sl_price, max_bars, entry_fee_rate=None,
                   exit_on_flip=0) -> int:
@@ -277,8 +274,7 @@ def list_closed_positions(dep_id, limit=200) -> list:
     return [_row_to_dict(r) for r in rows]
 
 
-# ── Equity / eventos ─────────────────────────────────────────────────────
-
+# Equity / eventos
 def add_equity_snapshot(dep_id, candle_ts, equity) -> None:
     with _conn() as con:
         con.execute(

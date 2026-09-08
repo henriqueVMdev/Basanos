@@ -13,24 +13,9 @@ from __future__ import annotations
 import math
 import time
 
-_CACHE: dict = {}
+from common import ttl_cache, to_float
 
-
-def _cached(key, ttl_s, fn):
-    hit = _CACHE.get(key)
-    if hit and time.time() - hit[0] < ttl_s:
-        return hit[1]
-    data = fn()
-    _CACHE[key] = (time.time(), data)
-    return data
-
-
-def _f(v):
-    try:
-        f = float(v)
-        return f if f == f else None
-    except (TypeError, ValueError):
-        return None
+_cached = ttl_cache()
 
 
 def _n_cdf(x):
@@ -97,8 +82,7 @@ def add_greeks(chain: dict) -> dict:
     return chain
 
 
-# ── superfície de volatilidade ───────────────────────────────────────────
-
+# superfície de volatilidade
 _MONEYNESS = [0.80, 0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15, 1.20]
 
 
@@ -139,8 +123,7 @@ def vol_surface(symbol: str, max_expiries: int = 6) -> dict:
     return _cached(("surface", symbol.upper(), max_expiries), 900, fetch)
 
 
-# ── simulador de estratégias ─────────────────────────────────────────────
-
+# simulador de estratégias
 def strategy_eval(payload: dict) -> dict:
     """
     payload: {spot, dte, iv_default?, legs: [{kind: call|put|stock,
@@ -148,33 +131,33 @@ def strategy_eval(payload: dict) -> dict:
     Retorna payoff no vencimento, P&L teórico hoje, breakevens, greeks
     líquidos e matriz de cenários (spot x tempo).
     """
-    spot = _f(payload.get("spot"))
-    dte = _f(payload.get("dte")) or 30
+    spot = to_float(payload.get("spot"))
+    dte = to_float(payload.get("dte")) or 30
     legs = payload.get("legs") or []
     if not spot or not legs:
         raise ValueError("spot e legs obrigatórios")
     r = _risk_free()
-    iv_default = (_f(payload.get("iv_default")) or 30) / 100
+    iv_default = (to_float(payload.get("iv_default")) or 30) / 100
     t = max(dte, 0.5) / 365
 
     def leg_val(leg, s, tt):
         kind = leg.get("kind")
-        qty = _f(leg.get("qty")) or 1
+        qty = to_float(leg.get("qty")) or 1
         sign = 1 if leg.get("side") == "buy" else -1
         if kind == "stock":
             return sign * qty * s
-        k = _f(leg.get("strike"))
+        k = to_float(leg.get("strike"))
         if tt <= 0:  # payoff no vencimento
             intrinsic = max(s - k, 0) if kind == "call" else max(k - s, 0)
             return sign * qty * intrinsic
-        iv = (_f(leg.get("iv")) or 0) / 100 or iv_default
+        iv = (to_float(leg.get("iv")) or 0) / 100 or iv_default
         g = bs(kind, s, k, tt, iv, r)
         return sign * qty * (g.get("price") or 0)
 
     def leg_cost(leg):
-        qty = _f(leg.get("qty")) or 1
+        qty = to_float(leg.get("qty")) or 1
         sign = 1 if leg.get("side") == "buy" else -1
-        base = _f(leg.get("premium"))
+        base = to_float(leg.get("premium"))
         if leg.get("kind") == "stock":
             base = spot if base is None else base
         return sign * qty * (base or 0)
@@ -202,13 +185,13 @@ def strategy_eval(payload: dict) -> dict:
     legs_out = []
     for leg in legs:
         sign = 1 if leg.get("side") == "buy" else -1
-        qty = _f(leg.get("qty")) or 1
+        qty = to_float(leg.get("qty")) or 1
         if leg.get("kind") == "stock":
             net["delta"] += sign * qty
             legs_out.append({**leg, "theo": round(spot, 4)})
             continue
-        iv = (_f(leg.get("iv")) or 0) / 100 or iv_default
-        g = bs(leg["kind"], spot, _f(leg.get("strike")), t, iv, r)
+        iv = (to_float(leg.get("iv")) or 0) / 100 or iv_default
+        g = bs(leg["kind"], spot, to_float(leg.get("strike")), t, iv, r)
         for k in net:
             net[k] += sign * qty * (g.get(k) or 0)
         theo_total += sign * qty * (g.get("price") or 0)

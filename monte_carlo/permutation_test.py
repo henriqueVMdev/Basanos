@@ -11,8 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
-
+# Helpers
 def _sharpe_from_curve(equity: np.ndarray, ann_factor: float = 252.0) -> float:
     arr  = np.asarray(equity, dtype=float)
     rets = np.diff(arr) / np.where(arr[:-1] != 0, arr[:-1], 1.0)
@@ -30,8 +29,7 @@ def _profit_factor_from_trades(trades: list[dict]) -> float:
     return round(sum(wins) / denom, 4) if denom > 0 else float("inf")
 
 
-# ─── Variante 1: Equity-curve based (para uso na API/web) ─────────────────────
-
+# Variante 1: Equity-curve based (para uso na API/web)
 class PermutationTestEquity:
     """
     Teste de permutação usando a equity curve diária.
@@ -93,8 +91,7 @@ class PermutationTestEquity:
         }
 
 
-# ─── Variante 2: Full OHLC-based (Timothy Masters — para uso no CLI) ──────────
-
+# Variante 2: Full OHLC-based (Timothy Masters — para uso no CLI)
 class PermutationTest:
     """
     Teste de permutação completo (Timothy Masters).

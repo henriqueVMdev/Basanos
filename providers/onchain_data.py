@@ -19,30 +19,13 @@ Tudo agregado em um payload único com cache de 15 min.
 
 from __future__ import annotations
 
-import math
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from common import ttl_cache, to_float
+
+_cached = ttl_cache()
 _UA = {"User-Agent": "GraphQuantLab/1.0 henrique.de.paula.valim@gmail.com"}
-_cache: dict = {}
-
-
-def _cached(key, ttl_s, fn):
-    now = time.time()
-    hit = _cache.get(key)
-    if hit and now - hit[0] < ttl_s:
-        return hit[1]
-    val = fn()
-    _cache[key] = (now, val)
-    return val
-
-
-def _f(v):
-    try:
-        v = float(v)
-        return v if math.isfinite(v) else None
-    except (TypeError, ValueError):
-        return None
 
 
 def _get(url, timeout=15):
@@ -52,8 +35,7 @@ def _get(url, timeout=15):
     return r.json()
 
 
-# ── visão POR MOEDA ──────────────────────────────────────────────────────
-
+# visão POR MOEDA
 # símbolo → id do CoinGecko (majors; fora do mapa cai no /search)
 _CG_IDS = {
     "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "ripple",
@@ -126,8 +108,8 @@ def _coin(sym: str) -> dict:
         fr = ex.fetch_funding_rate(pair)
         oi = ex.fetch_open_interest(pair)
         t = ex.fetch_ticker(pair)
-        amt, last = _f(oi.get("openInterestAmount")), _f(t.get("last"))
-        return {"funding_pct": (_f(fr.get("fundingRate")) or 0) * 100,
+        amt, last = to_float(oi.get("openInterestAmount")), to_float(t.get("last"))
+        return {"funding_pct": (to_float(fr.get("fundingRate")) or 0) * 100,
                 "oi_usd": amt * last if amt and last else None,
                 "last": last}
 
@@ -148,22 +130,22 @@ def _coin(sym: str) -> dict:
 
     if cg:
         md = cg.get("market_data") or {}
-        circ, mx = _f(md.get("circulating_supply")), _f(md.get("max_supply"))
+        circ, mx = to_float(md.get("circulating_supply")), to_float(md.get("max_supply"))
         dev = cg.get("developer_data") or {}
         com = cg.get("community_data") or {}
         out["profile"] = {
             "name": cg.get("name"), "rank": cg.get("market_cap_rank"),
-            "price": _f((md.get("current_price") or {}).get("usd")),
-            "mcap": _f((md.get("market_cap") or {}).get("usd")),
-            "volume_24h": _f((md.get("total_volume") or {}).get("usd")),
-            "chg_7d_pct": _f(md.get("price_change_percentage_7d")),
-            "chg_30d_pct": _f(md.get("price_change_percentage_30d")),
+            "price": to_float((md.get("current_price") or {}).get("usd")),
+            "mcap": to_float((md.get("market_cap") or {}).get("usd")),
+            "volume_24h": to_float((md.get("total_volume") or {}).get("usd")),
+            "chg_7d_pct": to_float(md.get("price_change_percentage_7d")),
+            "chg_30d_pct": to_float(md.get("price_change_percentage_30d")),
             "supply": {"circulating": circ, "max": mx,
                        "pct_emitted": circ / mx * 100 if circ and mx else None},
-            "ath": {"price": _f((md.get("ath") or {}).get("usd")),
-                    "change_pct": _f((md.get("ath_change_percentage") or {}).get("usd")),
+            "ath": {"price": to_float((md.get("ath") or {}).get("usd")),
+                    "change_pct": to_float((md.get("ath_change_percentage") or {}).get("usd")),
                     "date": ((md.get("ath_date") or {}).get("usd") or "")[:10]},
-            "sentiment_up_pct": _f(cg.get("sentiment_votes_up_percentage")),
+            "sentiment_up_pct": to_float(cg.get("sentiment_votes_up_percentage")),
             "dev": {"stars": dev.get("stars"),
                     "commits_4w": dev.get("commit_count_4_weeks"),
                     "forks": dev.get("forks")},
@@ -175,7 +157,7 @@ def _coin(sym: str) -> dict:
         d = chair["data"]
         out["network"] = {
             "txs_24h": d.get("transactions_24h"),
-            "avg_fee_usd_24h": _f(d.get("average_transaction_fee_usd_24h")),
+            "avg_fee_usd_24h": to_float(d.get("average_transaction_fee_usd_24h")),
             "mempool_txs": d.get("mempool_transactions"),
             "hashrate_24h": d.get("hashrate_24h"),
             "hodling_addresses": d.get("hodling_addresses"),
@@ -186,8 +168,8 @@ def _coin(sym: str) -> dict:
         out["tvl"] = {
             "chain": _LLAMA_CHAIN.get(sym),
             "ts": [p["date"] * 1000 for p in pts],
-            "values": [_f(p.get("tvl")) for p in pts],
-            "last": _f(pts[-1].get("tvl")) if pts else None,
+            "values": [to_float(p.get("tvl")) for p in pts],
+            "last": to_float(pts[-1].get("tvl")) if pts else None,
             "chg_30d_pct": ((pts[-1]["tvl"] / pts[-31]["tvl"] - 1) * 100
                             if len(pts) > 31 and pts[-31].get("tvl") else None),
             "source": "DeFiLlama",
@@ -196,17 +178,21 @@ def _coin(sym: str) -> dict:
     return out
 
 
+def _btc_metrics() -> dict:
+    from providers import btc_onchain_metrics
+    return btc_onchain_metrics.payload()
+
+
 def _series_btc(chart: str, timespan: str = "180days") -> dict:
     d = _get(f"https://api.blockchain.info/charts/{chart}"
              f"?timespan={timespan}&format=json", timeout=20)
     vals = d.get("values") or []
     return {"ts": [v["x"] * 1000 for v in vals],
-            "values": [_f(v["y"]) for v in vals],
+            "values": [to_float(v["y"]) for v in vals],
             "unit": d.get("unit")}
 
 
-# ── payload único ────────────────────────────────────────────────────────
-
+# payload único
 def overview() -> dict:
     return _cached("onchain", 900, _overview)
 
@@ -244,8 +230,7 @@ def _overview() -> dict:
             "https://api.alternative.me/fng/?limit=90"))
         f_cg = pool.submit(safe, "coingecko", lambda: _get(
             "https://api.coingecko.com/api/v3/global", timeout=20))
-        f_advanced = pool.submit(safe, "btc_metrics", lambda:
-            __import__("btc_onchain_metrics").payload())
+        f_advanced = pool.submit(safe, "btc_metrics", _btc_metrics)
 
         hashrate, addresses, txs = f_hash.result(), f_addr.result(), f_txs.result()
         fees, diff = f_fees.result(), f_diff.result()
@@ -254,13 +239,13 @@ def _overview() -> dict:
         fng, cg = f_fng.result(), f_cg.result()
         advanced = f_advanced.result()
 
-    # ── BTC: rede ────────────────────────────────────────────────────────
+    # BTC: rede
     btc = {"hashrate": hashrate, "addresses": addresses, "txs": txs,
            "fees_satvb": fees, "source_series": "blockchain.info (diário, 180d)"}
     if diff:
         btc["difficulty"] = {
-            "progress_pct": _f(diff.get("progressPercent")),
-            "change_pct": _f(diff.get("difficultyChange")),
+            "progress_pct": to_float(diff.get("progressPercent")),
+            "change_pct": to_float(diff.get("difficultyChange")),
             "remaining_blocks": diff.get("remainingBlocks"),
             "retarget_ts": diff.get("estimatedRetargetDate"),
         }
@@ -269,25 +254,25 @@ def _overview() -> dict:
         btc["snapshot"] = {
             "blocks": d.get("blocks"),
             "mempool_txs": d.get("mempool_transactions"),
-            "circulation_btc": (_f(d.get("circulation")) or 0) / 1e8 or None,
-            "dominance_pct": _f(d.get("market_dominance_percentage")),
-            "avg_fee_usd_24h": _f(d.get("average_transaction_fee_usd_24h")),
+            "circulation_btc": (to_float(d.get("circulation")) or 0) / 1e8 or None,
+            "dominance_pct": to_float(d.get("market_dominance_percentage")),
+            "avg_fee_usd_24h": to_float(d.get("average_transaction_fee_usd_24h")),
         }
     out["btc"] = btc
 
-    # ── DeFi: TVL + stablecoins ──────────────────────────────────────────
+    # DeFi: TVL + stablecoins
     defi = {}
     if chains:
-        rows = sorted(chains, key=lambda c: -(_f(c.get("tvl")) or 0))
-        defi["tvl_total"] = sum(_f(c.get("tvl")) or 0 for c in chains)
-        defi["chains"] = [{"name": c.get("name"), "tvl": _f(c.get("tvl")),
+        rows = sorted(chains, key=lambda c: -(to_float(c.get("tvl")) or 0))
+        defi["tvl_total"] = sum(to_float(c.get("tvl")) or 0 for c in chains)
+        defi["chains"] = [{"name": c.get("name"), "tvl": to_float(c.get("tvl")),
                            "symbol": c.get("tokenSymbol")}
                           for c in rows[:12]]
     if stables and stables.get("peggedAssets"):
         assets = stables["peggedAssets"]
 
         def circ(a, key="circulating"):
-            return _f((a.get(key) or {}).get("peggedUSD")) or 0.0
+            return to_float((a.get(key) or {}).get("peggedUSD")) or 0.0
 
         total_now = sum(circ(a) for a in assets)
         total_m = sum(circ(a, "circulatingPrevMonth") for a in assets)
@@ -309,7 +294,7 @@ def _overview() -> dict:
         }
     out["defi"] = defi
 
-    # ── Sentimento / global ──────────────────────────────────────────────
+    # Sentimento / global
     sent = {}
     if fng and fng.get("data"):
         rows = fng["data"]                       # mais recente primeiro
@@ -328,10 +313,10 @@ def _overview() -> dict:
         vol = (d.get("total_volume") or {}).get("usd")
         dom = d.get("market_cap_percentage") or {}
         sent["global"] = {
-            "mcap_usd": _f(mc), "volume_24h_usd": _f(vol),
-            "mcap_change_24h_pct": _f(d.get("market_cap_change_percentage_24h_usd")),
-            "btc_dominance": _f(dom.get("btc")),
-            "eth_dominance": _f(dom.get("eth")),
+            "mcap_usd": to_float(mc), "volume_24h_usd": to_float(vol),
+            "mcap_change_24h_pct": to_float(d.get("market_cap_change_percentage_24h_usd")),
+            "btc_dominance": to_float(dom.get("btc")),
+            "eth_dominance": to_float(dom.get("eth")),
             "active_cryptos": d.get("active_cryptocurrencies"),
         }
     out["sentiment"] = sent

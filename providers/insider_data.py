@@ -8,11 +8,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-_CACHE = {}
+from common import ttl_cache
+
+_cached = ttl_cache()
 _UA = {"User-Agent": os.getenv("SEC_API_USER_AGENT", "GraphQuantLab contact@example.com")}
 
 _CFTC = {
-    # Yahoo symbol -> (display name, exact CFTC contract market code)
+    # símbolo Yahoo -> (nome exibido, código do contrato na CFTC)
     "GC=F": ("GOLD", "088691"), "SI=F": ("SILVER", "084691"),
     "CL=F": ("CRUDE OIL", "067651"), "NG=F": ("NATURAL GAS", "023651"),
     "HG=F": ("COPPER", "085692"), "ZC=F": ("CORN", "002602"),
@@ -128,7 +130,7 @@ def _wallet(address):
 
 def _btc_wallets():
     wallets = list(_FAMOUS_BTC_WALLETS)
-    # Optional user-maintained labels: JSON array with label/entity/address/note.
+    # Rótulos extras do usuário: array JSON com label/entity/address/note.
     try:
         custom = json.loads(os.getenv("BTC_FAMOUS_WALLETS_JSON", "[]"))
         wallets.extend(x for x in custom if isinstance(x, dict) and x.get("address"))
@@ -145,26 +147,24 @@ def _btc_wallets():
         return list(pool.map(enrich, wallets))
 
 
-def _catalog(symbol, country):
-    rows = [
-        {"market": "Estados Unidos", "source": "SEC EDGAR Forms 3/4/5", "kind": "regulatory", "url": "https://www.sec.gov/edgar/search/"},
-        {"market": "Brasil", "source": "CVM — Valores Mobiliários Negociados e Detidos", "kind": "regulatory", "url": "https://dados.cvm.gov.br/dataset/cia_aberta-doc-vlmo"},
-        {"market": "Canadá", "source": "SEDI insider reports", "kind": "regulatory", "url": "https://www.sedi.ca/"},
-        {"market": "Reino Unido", "source": "FCA / PDMR disclosures", "kind": "regulatory", "url": "https://data.fca.org.uk/"},
-        {"market": "União Europeia", "source": "Regulador local / MAR PDMR", "kind": "regulatory", "url": "https://www.esma.europa.eu/"},
-        {"market": "Commodities", "source": "CFTC Commitments of Traders", "kind": "positioning", "url": "https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm"},
-        {"market": "Cripto", "source": "Binance Top Traders + métricas on-chain", "kind": "smart_money_proxy", "url": "https://developers.binance.com/"},
-    ]
-    return rows
+SOURCES = [
+    {"market": "Estados Unidos", "source": "SEC EDGAR Forms 3/4/5", "kind": "regulatory", "url": "https://www.sec.gov/edgar/search/"},
+    {"market": "Brasil", "source": "CVM — Valores Mobiliários Negociados e Detidos", "kind": "regulatory", "url": "https://dados.cvm.gov.br/dataset/cia_aberta-doc-vlmo"},
+    {"market": "Canadá", "source": "SEDI insider reports", "kind": "regulatory", "url": "https://www.sedi.ca/"},
+    {"market": "Reino Unido", "source": "FCA / PDMR disclosures", "kind": "regulatory", "url": "https://data.fca.org.uk/"},
+    {"market": "União Europeia", "source": "Regulador local / MAR PDMR", "kind": "regulatory", "url": "https://www.esma.europa.eu/"},
+    {"market": "Commodities", "source": "CFTC Commitments of Traders", "kind": "positioning", "url": "https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm"},
+    {"market": "Cripto", "source": "Binance Top Traders + métricas on-chain", "kind": "smart_money_proxy", "url": "https://developers.binance.com/"},
+]
 
 
 def smart_money(symbol: str, country=None, quote_type=None):
     key = (symbol.upper(), country, quote_type)
-    hit = _CACHE.get(key)
-    if hit and time.time() - hit[0] < 900:
-        return hit[1]
-    sym = symbol.upper()
-    out = {"asset": sym, "feeds": [], "sources": _catalog(sym, country), "errors": []}
+    return _cached(key, 900, lambda: _smart_money(key[0]))
+
+
+def _smart_money(sym: str) -> dict:
+    out = {"asset": sym, "feeds": [], "sources": SOURCES, "errors": []}
     jobs = []
     if sym in _CFTC:
         jobs.append(("CFTC", lambda: _cftc(sym)))
@@ -179,5 +179,4 @@ def smart_money(symbol: str, country=None, quote_type=None):
                 out["feeds"].append(value)
         except Exception as exc:
             out["errors"].append(f"{name}: {str(exc)[:120]}")
-    _CACHE[key] = (time.time(), out)
     return out

@@ -9,31 +9,16 @@ alertas ao mercado tradicional. Cache TTL próprio (dados Yahoo são atrasados
 
 from __future__ import annotations
 
-import time
 from concurrent.futures import ThreadPoolExecutor
 
-_CACHE: dict = {}
+import pandas as pd
+
+from common import ttl_cache, to_float
+
+_cached = ttl_cache()
 
 
-def _cached(key, ttl_s, fn):
-    hit = _CACHE.get(key)
-    if hit and time.time() - hit[0] < ttl_s:
-        return hit[1]
-    data = fn()
-    _CACHE[key] = (time.time(), data)
-    return data
-
-
-def _f(v):
-    try:
-        f = float(v)
-        return f if f == f else None  # NaN -> None
-    except (TypeError, ValueError):
-        return None
-
-
-# ── universos e aliases ──────────────────────────────────────────────────
-
+# universos e aliases
 STOCKS = [
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "BRK-B", "AVGO",
     "JPM", "LLY", "V", "UNH", "XOM", "MA", "COST", "HD", "PG", "NFLX", "JNJ",
@@ -100,6 +85,14 @@ ALIASES = {
 _LABELS = {yf: lb for uni in UNIVERSES.values() for yf, lb in uni}
 
 
+def _atr(df: pd.DataFrame, n: int = 14) -> float | None:
+    """ATR das ultimas n barras validas. skipna=False: barra incompleta nao conta."""
+    h, lo, prev = df["High"], df["Low"], df["Close"].shift()
+    tr = pd.concat([h - lo, (h - prev).abs(), (lo - prev).abs()],
+                   axis=1).max(axis=1, skipna=False).dropna()
+    return float(tr.tail(n).mean()) if len(tr) else None
+
+
 def resolve(symbol: str) -> str:
     """Alias amigável -> ticker yfinance; tickers já válidos passam direto."""
     s = (symbol or "").strip().upper()
@@ -110,13 +103,12 @@ def label_for(yf_sym: str) -> str:
     return _LABELS.get(yf_sym, yf_sym)
 
 
-# ── quotes (watch / alertas) ─────────────────────────────────────────────
-
+# quotes (watch / alertas)
 def _quote_one(yf_sym):
     import yfinance as yf
     fi = yf.Ticker(yf_sym).fast_info
-    last = _f(fi["last_price"])
-    prev = _f(fi["previous_close"])
+    last = to_float(fi["last_price"])
+    prev = to_float(fi["previous_close"])
     return {
         "base": yf_sym,
         "symbol": yf_sym,
@@ -124,9 +116,9 @@ def _quote_one(yf_sym):
         "market": "tradfi",
         "last": last,
         "pct24h": (last / prev - 1) * 100 if last and prev else None,
-        "high24": _f(fi["day_high"]),
-        "low24": _f(fi["day_low"]),
-        "vol_usd": _f(fi["last_volume"]) or None,   # p/ tradfi é volume em unid.
+        "high24": to_float(fi["day_high"]),
+        "low24": to_float(fi["day_low"]),
+        "vol_usd": to_float(fi["last_volume"]) or None,   # p/ tradfi é volume em unid.
         "funding": None,
         "next_funding_ts": None,
     }
@@ -151,8 +143,7 @@ def quotes(symbols: list[str]) -> dict:
     return out
 
 
-# ── sparkline ────────────────────────────────────────────────────────────
-
+# sparkline
 def closes(symbol: str, tf: str = "15m", bars: int = 96) -> list:
     yf_sym = resolve(symbol)
     interval = tf if tf in ("1m", "5m", "15m", "30m", "1h", "1d") else "15m"
@@ -161,13 +152,12 @@ def closes(symbol: str, tf: str = "15m", bars: int = 96) -> list:
     def fetch():
         import yfinance as yf
         df = yf.Ticker(yf_sym).history(period=period, interval=interval)
-        return [_f(v) for v in df["Close"].tail(bars).tolist()]
+        return [to_float(v) for v in df["Close"].tail(bars).tolist()]
 
     return _cached(("tspark", yf_sym, interval, bars), 600, fetch)
 
 
-# ── screener por universo ────────────────────────────────────────────────
-
+# screener por universo
 def screener_rows(market: str) -> list:
     uni = UNIVERSES.get(market)
     if not uni:
@@ -189,16 +179,8 @@ def screener_rows(market: str) -> list:
                 last = float(c.iloc[-1])
                 def ret(n):
                     return (last / float(c.iloc[-n - 1]) - 1) * 100 if len(c) > n else None
-                h, lo, cl = sub["High"], sub["Low"], sub["Close"]
-                trs = []
-                for i in range(1, len(sub)):
-                    if any(v != v for v in (h.iloc[i], lo.iloc[i], cl.iloc[i - 1])):
-                        continue
-                    trs.append(max(h.iloc[i] - lo.iloc[i],
-                                   abs(h.iloc[i] - cl.iloc[i - 1]),
-                                   abs(lo.iloc[i] - cl.iloc[i - 1])))
-                atr = sum(trs[-14:]) / min(14, len(trs)) if trs else None
-                vol = _f(sub["Volume"].iloc[-1]) if "Volume" in sub else None
+                atr = _atr(sub)
+                vol = to_float(sub["Volume"].iloc[-1]) if "Volume" in sub else None
                 rows.append({
                     "base": lb if market != "stocks" else yf_sym,
                     "symbol": yf_sym,
@@ -218,8 +200,7 @@ def screener_rows(market: str) -> list:
     return _cached(("tscreener", market), 1800, fetch)
 
 
-# ── DES (descrição do instrumento) ───────────────────────────────────────
-
+# DES (descrição do instrumento)
 _INFO_FIELDS = {
     "name": ("longName", "shortName"),
     "sector": ("sector",), "industry": ("industry",),
@@ -251,16 +232,16 @@ def describe(symbol: str) -> dict:
                        "exchange_name", "summary", "website"):
                 out[key] = str(v)[:600] if v is not None else None
             else:
-                out[key] = _f(v)
+                out[key] = to_float(v)
 
         fi = t.fast_info
-        last = _f(fi["last_price"])
-        prev = _f(fi["previous_close"])
+        last = to_float(fi["last_price"])
+        prev = to_float(fi["previous_close"])
         out.update({
             "last": last,
             "pct24h": (last / prev - 1) * 100 if last and prev else None,
-            "high24": _f(fi["day_high"]), "low24": _f(fi["day_low"]),
-            "vol_usd": _f(fi["last_volume"]),
+            "high24": to_float(fi["day_high"]), "low24": to_float(fi["day_low"]),
+            "vol_usd": to_float(fi["last_volume"]),
         })
 
         hist = t.history(period="6mo", interval="1d")
@@ -270,16 +251,8 @@ def describe(symbol: str) -> dict:
             def ret(n):
                 return (lastc / float(c.iloc[-n - 1]) - 1) * 100 if len(c) > n else None
             out["ret7d"], out["ret30d"] = ret(5), ret(21)
-            h, lo, cl = hist["High"], hist["Low"], hist["Close"]
-            trs = []
-            for i in range(max(1, len(hist) - 14), len(hist)):
-                vals = (h.iloc[i], lo.iloc[i], cl.iloc[i - 1])
-                if any(v != v for v in vals):
-                    continue
-                trs.append(max(h.iloc[i] - lo.iloc[i],
-                               abs(h.iloc[i] - cl.iloc[i - 1]),
-                               abs(lo.iloc[i] - cl.iloc[i - 1])))
-            out["atr_pct"] = (sum(trs) / len(trs)) / lastc * 100 if trs and lastc else None
+            atr = _atr(hist)
+            out["atr_pct"] = atr / lastc * 100 if atr and lastc else None
             out["price_hist"] = {
                 "dates": [int(ts.timestamp() * 1000) for ts in c.index],
                 "closes": [float(v) for v in c.tolist()],

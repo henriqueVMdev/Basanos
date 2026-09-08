@@ -25,36 +25,18 @@ rede e dados pagos (AIS de navios, cartões de crédito, satélite) não entram.
 from __future__ import annotations
 
 import io
-import math
 import re
 import time
 
 import pandas as pd
 
+from common import ttl_cache, to_float
+
+_cached = ttl_cache()
 _UA = {"User-Agent": "GraphQuantLab/1.0 henrique.de.paula.valim@gmail.com"}
-_cache: dict = {}
 
 
-def _cached(key, ttl_s, fn):
-    now = time.time()
-    hit = _cache.get(key)
-    if hit and now - hit[0] < ttl_s:
-        return hit[1]
-    val = fn()
-    _cache[key] = (now, val)
-    return val
-
-
-def _f(v):
-    try:
-        v = float(v)
-        return v if math.isfinite(v) else None
-    except (TypeError, ValueError):
-        return None
-
-
-# ── séries auxiliares (yfinance em lote) ─────────────────────────────────
-
+# séries auxiliares (yfinance em lote)
 def _closes(tickers: list[str], period: str = "1y") -> pd.DataFrame:
     def fetch():
         import yfinance as yf
@@ -81,8 +63,7 @@ def _ser(s: pd.Series, n: int = 126) -> dict:
             "values": [round(float(v), 3) for v in s]}
 
 
-# ── Indicadores proprietários ────────────────────────────────────────────
-
+# Indicadores proprietários
 def indicators() -> dict:
     return _cached("indicators", 1800, _indicators)
 
@@ -176,8 +157,7 @@ def _indicators() -> dict:
     return out
 
 
-# ── Supply chain (GSCPI real + proxies de frete/logística) ───────────────
-
+# Supply chain (GSCPI real + proxies de frete/logística)
 def gscpi_series() -> dict:
     def fetch():
         import requests
@@ -225,8 +205,7 @@ def supply_chain() -> dict:
     return _cached("supplychain", 1800, fetch)
 
 
-# ── Tráfego (TSA — passageiros/dia nos EUA) ──────────────────────────────
-
+# Tráfego (TSA — passageiros/dia nos EUA)
 def traffic() -> dict:
     def fetch():
         import requests
@@ -236,7 +215,7 @@ def traffic() -> dict:
         for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
             tds = re.findall(r"<td[^>]*>\s*([^<]*?)\s*</td>", tr)
             if len(tds) >= 2 and re.match(r"\d+/\d+/\d+", tds[0]):
-                n = _f(tds[1].replace(",", ""))
+                n = to_float(tds[1].replace(",", ""))
                 if n:
                     rows.append((pd.Timestamp(tds[0]).strftime("%Y-%m-%d"), n))
         rows.sort()
@@ -247,7 +226,7 @@ def traffic() -> dict:
         return {
             "ts": [d.strftime("%Y-%m-%d") for d in s.index],
             "passengers": [int(v) for v in s],
-            "avg7": [round(float(v)) if not math.isnan(v) else None for v in avg7],
+            "avg7": [None if (x := to_float(v)) is None else round(x) for v in avg7],
             "last": int(s.iloc[-1]), "last_date": s.index[-1].strftime("%Y-%m-%d"),
             "avg7_last": round(float(avg7.iloc[-1])),
             "mom_pct": round(mom, 1) if mom is not None else None,
@@ -258,8 +237,7 @@ def traffic() -> dict:
     return _cached("tsa", 6 * 3600, fetch)
 
 
-# ── Clima (ENSO oficial + regiões produtoras via met.no) ────────────────
-
+# Clima (ENSO oficial + regiões produtoras via met.no)
 def climate() -> dict:
     def fetch():
         import requests
@@ -271,12 +249,12 @@ def climate() -> dict:
             parts = ln.split()
             if len(parts) == 4:
                 rows.append({"season": parts[0], "year": int(parts[1]),
-                             "anom": _f(parts[3])})
+                             "anom": to_float(parts[3])})
         recent = rows[-12:]
         last = recent[-1]
         anom = last["anom"] or 0
-        # convenção NOAA: 5 trimestres consecutivos ±0.5 = evento; aqui
-        # classificamos a leitura corrente (rótulo aproximado)
+        # NOAA exige 5 trimestres consecutivos ±0.5 p/ declarar evento;
+        # aqui é só a leitura corrente (rótulo aproximado)
         status = ("El Niño" if anom >= 0.5 else
                   "La Niña" if anom <= -0.5 else "Neutro")
         impact = {
@@ -304,8 +282,7 @@ def climate() -> dict:
     return _cached("climate", 12 * 3600, fetch)
 
 
-# ── Métricas setoriais (estoques/margens dos balanços trimestrais) ──────
-
+# Métricas setoriais (estoques/margens dos balanços trimestrais)
 SECTORS = {
     "varejo": {"label": "Varejo (EUA)",
                "tickers": ["WMT", "TGT", "COST", "HD", "AMZN"],
@@ -353,9 +330,8 @@ def _sector_row(t: str) -> dict | None:
               if len(gp) and len(rev) and rev.iloc[0] else None)
     d_now = days_hist[0]["days"] if days_hist else None
     d_yoy = days_hist[4]["days"] if len(days_hist) > 4 else None
-    # Yahoo às vezes mistura receita ACUMULADA do ano fiscal com COGS
-    # trimestral (visto no MU) — sinaliza valores implausíveis em vez de
-    # apresentá-los como fato
+    # Yahoo às vezes mistura receita acumulada do ano fiscal com COGS
+    # trimestral (visto no MU): marca o implausível em vez de afirmá-lo
     suspect = ((margin is not None and margin > 85)
                or (rev_yoy is not None and abs(rev_yoy) > 200))
     return {
@@ -379,7 +355,7 @@ def sector_metrics(sector: str) -> dict:
         from concurrent.futures import ThreadPoolExecutor
         cfg = SECTORS[sector]
         with ThreadPoolExecutor(max_workers=5) as pool:
-            rows = list(pool.map(lambda t: _sector_row(t), cfg["tickers"]))
+            rows = list(pool.map(_sector_row, cfg["tickers"]))
         rows = [r for r in rows if r]
         return {"sector": sector, "label": cfg["label"],
                 "insight": cfg["insight"], "rows": rows,
@@ -391,8 +367,7 @@ def sector_metrics(sector: str) -> dict:
     return _cached(("sector", sector), 6 * 3600, fetch)
 
 
-# ── Microestrutura cripto (funding agregado + open interest) ────────────
-
+# Microestrutura cripto (funding agregado + open interest)
 _MAJORS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "LINK",
            "AVAX", "SUI", "LTC", "DOT"]
 
@@ -403,9 +378,9 @@ def crypto_micro() -> dict:
         from providers.market_data import get_exchange
         ex = get_exchange("bybit")
         frs = ex.fetch_funding_rates()
-        rows = [(s.split("/")[0], _f(v.get("fundingRate")))
+        rows = [(s.split("/")[0], to_float(v.get("fundingRate")))
                 for s, v in frs.items()
-                if s.endswith(":USDT") and _f(v.get("fundingRate")) is not None]
+                if s.endswith(":USDT") and to_float(v.get("fundingRate")) is not None]
         rates = [r for _, r in rows]
         pos = sum(1 for r in rates if r > 0)
         rows.sort(key=lambda x: x[1])
@@ -414,13 +389,13 @@ def crypto_micro() -> dict:
             try:
                 t = ex.fetch_ticker(f"{base}/USDT:USDT")
                 oi = ex.fetch_open_interest(f"{base}/USDT:USDT")
-                amt = _f(oi.get("openInterestAmount"))
-                last = _f(t.get("last"))
-                fr = _f((frs.get(f"{base}/USDT:USDT") or {}).get("fundingRate"))
+                amt = to_float(oi.get("openInterestAmount"))
+                last = to_float(t.get("last"))
+                fr = to_float((frs.get(f"{base}/USDT:USDT") or {}).get("fundingRate"))
                 return {"symbol": base, "oi": amt, "last": last,
                         "oi_usd": amt * last if amt and last else None,
                         "funding_pct": fr * 100 if fr is not None else None,
-                        "pct24h": _f(t.get("percentage"))}
+                        "pct24h": to_float(t.get("percentage"))}
             except Exception:
                 return None
 

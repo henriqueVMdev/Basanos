@@ -13,25 +13,16 @@ individuais do Yahoo (CLZ26.NYM etc., listados por commodities_data).
 from __future__ import annotations
 
 import re
-import time
 
 import numpy as np
 import pandas as pd
 
-_CACHE: dict = {}
+from common import to_float, ttl_cache
+
+_cached = ttl_cache()
 
 
-def _cached(key, ttl_s, fn):
-    hit = _CACHE.get(key)
-    if hit and time.time() - hit[0] < ttl_s:
-        return hit[1]
-    data = fn()
-    _CACHE[key] = (time.time(), data)
-    return data
-
-
-# ── histórico unificado ──────────────────────────────────────────────────
-
+# histórico unificado
 # tradfi: intervalo -> (interval yahoo, period máximo p/ esse intervalo)
 _YF_INTERVALS = {
     "15m": ("15m", "60d"), "30m": ("30m", "60d"), "1h": ("1h", "730d"),
@@ -74,8 +65,7 @@ def history(symbol: str, market: str, interval: str, bars: int,
     return _cached(key, _TTL.get(interval, 600), fetch)
 
 
-# ── indicadores ──────────────────────────────────────────────────────────
-
+# indicadores
 def _sma(s, n):
     return s.rolling(int(n)).mean()
 
@@ -104,8 +94,7 @@ def _bollinger(s, n=20, k=2.0):
     return mid, mid + k * sd, mid - k * sd
 
 
-# ── estudos customizados (expressão com whitelist) ───────────────────────
-
+# estudos customizados (expressão com whitelist)
 _EXPR_ALLOWED = re.compile(r"^[A-Za-z0-9_+\-*/(),.\s]+$")
 _EXPR_NAMES = {"open", "high", "low", "close", "volume",
                "SMA", "EMA", "RSI", "STD", "MAX", "MIN", "ROC",
@@ -138,10 +127,9 @@ def eval_custom(expr: str, df: pd.DataFrame) -> pd.Series:
     return out
 
 
-# ── payloads ─────────────────────────────────────────────────────────────
-
+# payloads
 def _ser(s: pd.Series) -> list:
-    return [None if (v != v) else round(float(v), 6) for v in s]
+    return [None if (x := to_float(v)) is None else round(x, 6) for v in s]
 
 
 def _ts(df: pd.DataFrame) -> list:

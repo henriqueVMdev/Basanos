@@ -3,10 +3,10 @@ Scraper do X (Twitter) via navegador automatizado (Playwright).
 
 Requer uma sessão logada (use uma conta DESCARTÁVEL — automação viola os ToS do X):
 
-    .venv/bin/python x_scraper.py login    # abre navegador, faça login, feche a janela
-    .venv/bin/python x_scraper.py search '$CASHCAT'   # testa a busca no terminal
+    .venv/bin/python -m providers.x_scraper login    # abre navegador e faça login
+    .venv/bin/python -m providers.x_scraper search '$CASHCAT'
 
-A sessão fica em .x_session.json (já está no .gitignore — não commitar).
+A sessão fica em data/.x_session.json (no .gitignore — não commitar).
 """
 
 import json

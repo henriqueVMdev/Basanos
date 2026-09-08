@@ -69,12 +69,11 @@ def plot_return_vs_sharpe(df: pd.DataFrame):
 def plot_return_vs_trades(df: pd.DataFrame):
     """Scatter: Retorno (%) vs Numero de Trades, colorido por Profit Factor.
 
-    Escala divergente centrada em PF=1 (breakeven) com range dinamico baseado
-    nos percentis 5-95 dos dados, para maximizar contraste entre valores tipicos.
+    Escala divergente com breakeven (PF=1) fixo no meio e extremos nos
+    percentis 5-95, para nao achatar o contraste com outliers.
     """
     plot_df = df.reset_index(drop=True)
 
-    # Clip extremos para nao achatar a escala (infs e outliers)
     pf_raw = plot_df["profit_factor"].replace([np.inf, -np.inf], np.nan).dropna()
     if len(pf_raw) >= 2:
         pf_lo = float(max(0.0, np.percentile(pf_raw, 5)))
@@ -84,25 +83,17 @@ def plot_return_vs_trades(df: pd.DataFrame):
     else:
         pf_lo, pf_hi = 0.0, 3.0
 
-    # Garante que 1.0 (breakeven) esteja dentro do range
+    # Mantem 1.0 dentro do range, garantindo escala estritamente crescente
     pf_lo = min(pf_lo, 0.8)
     pf_hi = max(pf_hi, 1.5)
-
-    # Normaliza PF para [0,1] com breakeven (PF=1) fixo em 0.5, mantendo
-    # contraste independente em cada lado. Outliers saturam nas pontas.
-    # pf_lo <= 0.8 < 1 < 1.5 <= pf_hi garante denominadores nao nulos.
-    def _norm_pf(v):
-        v = min(max(v, pf_lo), pf_hi)
-        if v <= 1.0:
-            return 0.5 * (v - pf_lo) / (1.0 - pf_lo)
-        return 0.5 + 0.5 * (v - 1.0) / (pf_hi - 1.0)
+    PF_SCALE, NORM_SCALE = [pf_lo, 1.0, pf_hi], [0.0, 0.5, 1.0]
 
     plot_df = plot_df.copy()
-    plot_df["pf_norm"] = plot_df["profit_factor"].map(_norm_pf)
+    plot_df["pf_norm"] = np.interp(plot_df["profit_factor"], PF_SCALE, NORM_SCALE)
 
     hover = _filter_cols(plot_df, ["rank", "sharpe", "max_dd_pct", "win_rate_pct", "ma", "profit_factor"])
     hover_data = {c: True for c in hover}
-    hover_data["pf_norm"] = False  # campo interno de cor, nao exibe
+    hover_data["pf_norm"] = False  # campo interno de cor
     fig = px.scatter(
         plot_df,
         x="trades",
@@ -128,17 +119,12 @@ def plot_return_vs_trades(df: pd.DataFrame):
         template="plotly_white",
     )
 
-    # Colorbar mostra valores reais de PF (inverte a normalizacao)
-    def _inv_norm(p):
-        if p <= 0.5:
-            return pf_lo + (p / 0.5) * (1.0 - pf_lo)
-        return 1.0 + ((p - 0.5) / 0.5) * (pf_hi - 1.0)
-
+    # Colorbar exibe o PF real, desfazendo a normalizacao
     tickvals = [0.0, 0.25, 0.5, 0.75, 1.0]
     fig.update_coloraxes(colorbar=dict(
         title="Profit Factor",
         tickvals=tickvals,
-        ticktext=[f"{_inv_norm(p):.2f}" for p in tickvals],
+        ticktext=[f"{pf:.2f}" for pf in np.interp(tickvals, NORM_SCALE, PF_SCALE)],
     ))
     fig.update_traces(marker=dict(size=8, opacity=0.7, line=dict(width=0.5, color="DarkSlateGrey")))
     fig.update_layout(

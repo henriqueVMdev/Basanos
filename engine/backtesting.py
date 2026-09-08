@@ -18,10 +18,7 @@ import sys
 from pathlib import Path
 
 
-# ==============================
 # 1. CONFIGURAÇÃO (equivale aos inputs do Pine Script)
-# ==============================
-
 @dataclass
 class Config:
     # Média Principal
@@ -87,10 +84,7 @@ class Config:
     allowed_hours: list = field(default_factory=list)       # ex: [9,10,11,14,15] (0-23 BRT)
 
 
-# ==============================
 # 2. INDICADORES (equivale às funções do Pine Script)
-# ==============================
-
 def calc_sma(series: pd.Series, length: int) -> pd.Series:
     return series.rolling(window=length, min_periods=length).mean()
 
@@ -173,10 +167,7 @@ def calc_angle(slope: float, atr_val: float, use_norm: bool, mintick: float = 0.
     return math.degrees(math.atan(norm))
 
 
-# ==============================
 # 3. PREPARAÇÃO DOS DADOS
-# ==============================
-
 def prepare_indicators(df: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     """Calcula todos os indicadores e adiciona ao DataFrame."""
     df = df.copy()
@@ -238,10 +229,7 @@ def prepare_indicators(df: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     return df
 
 
-# ==============================
 # 4. ENGINE DE BACKTESTING
-# ==============================
-
 @dataclass
 class Trade:
     entry_date: str
@@ -365,13 +353,13 @@ def run_backtest(df: pd.DataFrame, cfg: Config) -> BacktestState:
             equity_curve.append(st.equity)
             continue
 
-        # --- MUDANÇA DE ESTADO: reset pullback e marca pendentes ---
+        # MUDANÇA DE ESTADO: reset pullback e marca pendentes
         if state != prev_state:
             st.aguardando_pullback = False
             st.pending_long = (state == 1)
             st.pending_short = (state == -1)
 
-        # --- SAIDA PARCIAL (antes do TP/SL) ---
+        # SAIDA PARCIAL (antes do TP/SL)
         if (cfg.use_parcial and st.position != 0
                 and not st.partial_taken and st.current_trade is not None):
             parcial_price = None
@@ -400,7 +388,7 @@ def run_backtest(df: pd.DataFrame, cfg: Config) -> BacktestState:
                     st.current_trade.partial_exit_date = date
                     st.current_trade.partial_pct_closed = fraction
 
-        # --- SAÍDAS INTRABAR (TP + SL checados contra High/Low) ---
+        # SAÍDAS INTRABAR (TP + SL checados contra High/Low)
         if st.position != 0 and st.current_trade is not None:
             tp_price = None
             sl_price = None
@@ -480,7 +468,7 @@ def run_backtest(df: pd.DataFrame, cfg: Config) -> BacktestState:
                     if state == 1 or state == -1:
                         st.aguardando_pullback = True
 
-        # --- FIM DE TENDÊNCIA ---
+        # FIM DE TENDÊNCIA
         if st.position != 0:
             if cfg.exit_on_flat and state == 0:
                 _close_position(st, date, close, "Fim Tendência (Cinza)")
@@ -490,11 +478,10 @@ def run_backtest(df: pd.DataFrame, cfg: Config) -> BacktestState:
                 elif prev_state == -1 and state == 1:
                     _close_position(st, date, close, "Inversão S→L")
 
-        # --- DETECTA SAÍDA POR ALVO (pullback) ---
+        # DETECTA SAÍDA POR ALVO (pullback)
         # (já tratado acima no hit_sl/hit_tp)
 
-        # --- ENTRADAS ---
-
+        # ENTRADAS
         # A. Entrada de Tendência
         if not st.aguardando_pullback and (not cfg.use_entry_zone or in_entry_zone) and _hour_allows(cfg, bar_hour):
             if st.pending_long and state == 1 and st.position <= 0 and _cycle_allows(cfg, bar_month, 1):
@@ -647,10 +634,7 @@ def _close_position(st: BacktestState, date: str, price: float, comment: str):
     st.qty = 0.0
 
 
-# ==============================
 # 5. RELATÓRIO
-# ==============================
-
 def print_report(st: BacktestState, cfg: Config):
     """Imprime relatório completo do backtest."""
 
@@ -717,10 +701,7 @@ def print_report(st: BacktestState, cfg: Config):
     print("\n" + "=" * 60)
 
 
-# ==============================
 # 6. DADOS
-# ==============================
-
 def load_csv(path: str) -> pd.DataFrame:
     df = pd.read_csv(path, parse_dates=["Date"], index_col="Date")
     required = {"Open", "High", "Low", "Close"}
@@ -751,10 +732,7 @@ def download_data(symbol: str = "BTCUSDT", interval: str = "1d", limit: int = 10
         sys.exit(1)
 
 
-# ==============================
 # 7. MAIN
-# ==============================
-
 def main():
     parser = argparse.ArgumentParser(description="Backtesting — Estratégia DePaula v2")
 

@@ -287,8 +287,7 @@ DASHBOARD_TO_OPTIMIZER_KEY = {
 }
 
 
-# ─── Helpers ───────────────────────────────────────────────────────────────────
-
+# Helpers
 def _safe(val):
     """Converte NaN/inf para None para serialização JSON segura."""
     if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
@@ -538,8 +537,7 @@ def _map_backtest_params(row: dict) -> dict:
     return params
 
 
-# ─── Endpoints ─────────────────────────────────────────────────────────────────
-
+# Endpoints
 @app.route("/api/files", methods=["GET"])
 def api_files():
     """Lista arquivos CSV na pasta data/."""
@@ -1681,7 +1679,7 @@ def api_backtest_montecarlo():
 
         arr = np.array(values, dtype=float)
 
-        # ── Parâmetros estatísticos ──────────────────────────────────────────
+        # Parâmetros estatísticos
         log_rets = np.diff(np.log(arr))
         log_rets = log_rets[np.isfinite(log_rets)]
         if len(log_rets) < 5:
@@ -1694,24 +1692,24 @@ def api_backtest_montecarlo():
 
         steps = max(int(len(arr) * 0.75), 30) if horizon == 0 else horizon
 
-        # ── GBM vetorizado com numpy ─────────────────────────────────────────
+        # GBM vetorizado com numpy
         rng        = np.random.default_rng(seed)
         Z          = rng.standard_normal((num_sims, steps))
         increments = np.exp((mu - 0.5 * variance) + sigma * Z)
         paths      = np.cumprod(increments, axis=1) * S0          # (N, steps)
         paths      = np.hstack([np.full((num_sims, 1), S0), paths])  # prepend S0 → (N, steps+1)
 
-        # ── Percentis ────────────────────────────────────────────────────────
+        # Percentis
         p10 = np.percentile(paths, 10, axis=0).tolist()
         p50 = np.percentile(paths, 50, axis=0).tolist()
         p90 = np.percentile(paths, 90, axis=0).tolist()
 
-        # ── Regressão linear sobre a mediana (numpy.polyfit) ─────────────────
+        # Regressão linear sobre a mediana (numpy.polyfit)
         x_idx    = np.arange(steps + 1, dtype=float)
         coeffs   = np.polyfit(x_idx, p50, 1)
         reg_line = (coeffs[0] * x_idx + coeffs[1]).tolist()
 
-        # ── Amostra de caminhos para visualização (30 paths) ─────────────────
+        # Amostra de caminhos para visualização (30 paths)
         sample_n    = min(30, num_sims)
         sample_idx  = np.linspace(0, num_sims - 1, sample_n, dtype=int)
         sample_paths = [
@@ -1719,7 +1717,7 @@ def api_backtest_montecarlo():
             for i in sample_idx
         ]
 
-        # ── Datas futuras via pandas (dias úteis) ────────────────────────────
+        # Datas futuras via pandas (dias úteis)
         last_str = dates[-1] if dates else ""
         try:
             last_ts = pd.Timestamp(last_str)
@@ -1732,12 +1730,12 @@ def api_backtest_montecarlo():
             d.strftime("%Y-%m-%d") for d in future_bdays
         ]
 
-        # ── Janela histórica visível (≤ metade do horizonte) ─────────────────
+        # Janela histórica visível (≤ metade do horizonte)
         hist_window = min(len(arr), math.ceil(steps / 2))
         hist_dates  = dates[-hist_window:]
         hist_values = [_safe(float(v)) for v in arr[-hist_window:]]
 
-        # ── Estatísticas finais ───────────────────────────────────────────────
+        # Estatísticas finais
         finals = paths[:, -1]
         stats  = {
             "median_final": _safe(float(np.percentile(finals, 50))),
@@ -1826,7 +1824,7 @@ def api_backtest_validate():
         except Exception:
             pass
 
-        # ── Monte Carlo ──────────────────────────────────────────────────────
+        # Monte Carlo
         mc = MonteCarlo(initial_capital=ic, seed=seed, ann_factor=ann_factor)
 
         reshuffle_r         = mc.reshuffle(trades,        n_sims=n_sims)
@@ -1834,11 +1832,11 @@ def api_backtest_validate():
         randomized_r        = mc.randomized(trades,       n_sims=n_sims)
         return_alteration_r = mc.return_alteration(eq_values, eq_dates, n_sims=n_sims)
 
-        # ── Permutation Test (equity-curve based) ────────────────────────────
+        # Permutation Test (equity-curve based)
         pt          = PermutationTestEquity(seed=seed, ann_factor=ann_factor)
         perm_result = pt.run(eq_values, trades, n_perms=n_perms)
 
-        # ── Métricas originais enriquecidas ──────────────────────────────────
+        # Métricas originais enriquecidas
         arr_eq  = np.array(eq_values, dtype=float)
         rets_eq = np.diff(arr_eq) / np.where(arr_eq[:-1] != 0, arr_eq[:-1], 1.0)
         rets_eq = rets_eq[np.isfinite(rets_eq)]
@@ -1933,7 +1931,7 @@ def api_backtest_validate():
             "expectancy": _safe(expectancy),
         }
 
-        # ── Relatório textual ────────────────────────────────────────────────
+        # Relatório textual
         report_text = gen_report(
             original=original,
             mc_results={
@@ -1964,8 +1962,7 @@ def api_backtest_validate():
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
-# ─── Optimizer ────────────────────────────────────────────────────────────────
-
+# Optimizer
 # Estado global do otimizador (cancel + progresso)
 _optimizer_cancel = threading.Event()
 _optimizer_progress = {"current": 0, "total": 0, "valid": 0, "status": "idle"}
@@ -2557,7 +2554,7 @@ def api_prop_challenge_simulate():
 
         valid_trades = [t for t in trades if t.get("pnl_pct") is not None]
 
-        # ── Sizing por risco fixo (opcional) ──────────────────────────────
+        # Sizing por risco fixo (opcional)
         # Redimensiona cada trade para arriscar `risk_pct` da conta na
         # distância REAL do stop: alavancagem implícita = risco ÷ stop_dist
         # (limitada por lev_cap). Fees maker/taker e funding ESPERADO por
@@ -2855,8 +2852,7 @@ def api_prop_challenge_simulate():
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
-# ─── Regime Detection API ────────────────────────────────────────────────────
-
+# Regime Detection API
 @app.route("/api/regime/detect", methods=["POST"])
 def regime_detect():
     """Detecta regimes de mercado via HMM, Markov Switching ou Change-Point."""
@@ -2908,10 +2904,7 @@ def regime_detect():
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 #  Trade Journal — registro manual de operações por estratégia
-# ─────────────────────────────────────────────────────────────────────────────
-
 JOURNAL_FILE = Path(__file__).parent / "data" / "journal_data.json"
 _journal_lock = threading.Lock()
 
@@ -3172,11 +3165,11 @@ def api_journal_sync():
     })
 
 
-# ─── Automação (paper / Bybit demo) ──────────────────────────────────────
+# Automação (paper / Bybit demo)
 from automation.api import automation_bp  # noqa: E402
 app.register_blueprint(automation_bp)
 
-# ─── Terminal (monitor / screener / DES / alertas / notícias) ─────────────
+# Terminal (monitor / screener / DES / alertas / notícias)
 from api.terminal_api import terminal_bp  # noqa: E402
 app.register_blueprint(terminal_bp)
 
@@ -3184,7 +3177,7 @@ app.register_blueprint(terminal_bp)
 from api.agents_api import agents_bp  # noqa: E402
 app.register_blueprint(agents_bp)
 
-# ─── HFT on-chain (memecoins, paper) ───────────────────────────────────────
+# HFT on-chain (memecoins, paper)
 from api.hft_engine import hft_bp  # noqa: E402
 app.register_blueprint(hft_bp)
 
@@ -3313,8 +3306,7 @@ def degen_tokens():
     return jsonify(result)
 
 
-# ─── Degen: Hype Radar (Twitter/X + on-chain) ────────────────────────────────
-
+# Degen: Hype Radar (Twitter/X + on-chain)
 import os as _os
 import re as _re
 from dotenv import load_dotenv as _load_dotenv

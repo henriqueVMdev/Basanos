@@ -94,8 +94,7 @@ def _slippage_pct(order_usd, liquidity_usd):
     return min(5.0, 100.0 * order_usd / liquidity_usd * 2)
 
 
-# ─── Scan: candidatos via GeckoTerminal trending ────────────────────────────
-
+# Scan: candidatos via GeckoTerminal trending
 def _scan(st):
     cfg = st["config"]
     try:
@@ -139,8 +138,7 @@ def _scan(st):
                            f"({len(st['watchlist'])} total)")
 
 
-# ─── Tick: dados frescos via DexScreener batch ──────────────────────────────
-
+# Tick: dados frescos via DexScreener batch
 DS_SLUGS = {"eth": "ethereum"}
 
 
@@ -271,8 +269,7 @@ def _tick(st):
             _try_enter(st, addr, info, snaps[addr])
 
 
-# ─── Loop principal (thread) ─────────────────────────────────────────────────
-
+# Loop principal (thread)
 def _run_loop():
     last_scan = 0.0
     while not _stop_flag.is_set():
@@ -303,8 +300,7 @@ def _ensure_thread():
         _thread.start()
 
 
-# ─── API ─────────────────────────────────────────────────────────────────────
-
+# API
 @hft_bp.get("/api/hft/status")
 def hft_status():
     with _lock:

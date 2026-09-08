@@ -39,8 +39,7 @@ GRAPH_API = "http://127.0.0.1:5000/api"
 DEFAULT_MODEL = "anthropic/claude-sonnet-5"
 
 
-# ─── Store (JSON) ────────────────────────────────────────────────────────────
-
+# Store (JSON)
 def _load():
     if AGENTS_FILE.exists():
         data = json.loads(AGENTS_FILE.read_text())
@@ -76,8 +75,7 @@ def _sanitize(payload, agent=None):
     return a
 
 
-# ─── Tools nativas ───────────────────────────────────────────────────────────
-
+# Tools nativas
 def _tool_degen_tokens(args):
     r = requests.get(f"{GRAPH_API}/degen/tokens", params={
         "chain": args.get("chain", "robinhood"),
@@ -285,8 +283,7 @@ def _tool_defs(agent, data):
     return defs or None
 
 
-# ─── Roteamento de runtime (mesma regra do AgentHUB) ─────────────────────────
-
+# Roteamento de runtime (mesma regra do AgentHUB)
 def _runtime(agent):
     kind = agent.get("agent_type", "native")
     if kind == "hermes":
@@ -315,8 +312,7 @@ def _chat(base_url, api_key, model, temperature, messages, tools):
     return r.json()
 
 
-# ─── CRUD ────────────────────────────────────────────────────────────────────
-
+# CRUD
 @agents_bp.route("/api/agents", methods=["GET"])
 def list_agents():
     with _lock:
@@ -362,8 +358,7 @@ def delete_agent(aid):
     return jsonify({"ok": True})
 
 
-# ─── Run com SSE ─────────────────────────────────────────────────────────────
-
+# Run com SSE
 def _sse(event, payload):
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
@@ -482,8 +477,7 @@ def run_agent(aid):
                              "X-Accel-Buffering": "no"})
 
 
-# ─── Skills e propostas ──────────────────────────────────────────────────────
-
+# Skills e propostas
 @agents_bp.route("/api/agents/skills", methods=["POST"])
 def create_skill():
     with _lock:

@@ -80,8 +80,7 @@ def _tf_ms(interval: str) -> int:
     return tf_ms(interval)
 
 
-# ── Reconciliação ────────────────────────────────────────────────────────
-
+# Reconciliação
 def _resolve_closed_position(ex, sym, dep, pos):
     """Posição sumiu da exchange: TP/SL server-side executou. Busca os fills
     reais para PnL/fees e fecha no DB."""
@@ -198,8 +197,7 @@ def _reconcile(ex, sym, dep):
     return pos_db, ex_orders
 
 
-# ── Ciclo principal ──────────────────────────────────────────────────────
-
+# Ciclo principal
 def process(dep, df_closed, interval):
     """Chamado pelo runner a cada tick para deployments mode='demo'|'real'."""
     from . import signals

@@ -13,8 +13,7 @@ import numpy as np
 import pandas as pd
 
 
-# ─── Classe de configuração ────────────────────────────────────────────────────
-
+# Classe de configuração
 @dataclass
 class SMACrossConfig:
     fast:             int   = 20        # período da MA rápida
@@ -24,8 +23,7 @@ class SMACrossConfig:
     slippage_pct:     float = 0.0005    # 0.05% slippage
 
 
-# ─── Resultado ─────────────────────────────────────────────────────────────────
-
+# Resultado
 @dataclass
 class BacktestResult:
     trades:       list[dict]   = field(default_factory=list)
@@ -33,8 +31,7 @@ class BacktestResult:
     metrics:      dict         = field(default_factory=dict)
 
 
-# ─── Estratégia base (interface) ───────────────────────────────────────────────
-
+# Estratégia base (interface)
 class Strategy:
     """Interface mínima que qualquer estratégia deve implementar."""
 
@@ -42,8 +39,7 @@ class Strategy:
         raise NotImplementedError
 
 
-# ─── SMA Crossover ─────────────────────────────────────────────────────────────
-
+# SMA Crossover
 class SMACrossover(Strategy):
     """
     SMA Crossover: compra quando MA rápida cruza acima da lenta; vende ao contrário.
@@ -128,8 +124,7 @@ class SMACrossover(Strategy):
         )
 
 
-# ─── Métricas ──────────────────────────────────────────────────────────────────
-
+# Métricas
 def _safe(v):
     if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
         return None
@@ -175,8 +170,7 @@ def _compute_metrics(trades: list[dict], equity: list[float], ic: float) -> dict
     }
 
 
-# ─── Download de dados ─────────────────────────────────────────────────────────
-
+# Download de dados
 def download_data(
     ticker: str = "BTC-USD",
     period: str = "4y",

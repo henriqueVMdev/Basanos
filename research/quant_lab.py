@@ -116,8 +116,7 @@ def run_engine(df, fund, signal, cfg):
     return trades
 
 
-# ── Familias de sinal (todas no candle fechado i) ────────────────────────
-
+# Familias de sinal (todas no candle fechado i)
 def sig_donchian(df, n=96, trend=200):
     """Rompimento do maior high/menor low de n candles, filtro EMA de tendencia."""
     H, L, C = df["High"].values, df["Low"].values, df["Close"].values

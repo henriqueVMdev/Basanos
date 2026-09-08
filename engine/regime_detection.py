@@ -15,8 +15,7 @@ from scipy import stats as scipy_stats
 warnings.filterwarnings("ignore")
 
 
-# ─── Feature engineering ─────────────────────────────────────────────────────
-
+# Feature engineering
 def _compute_features(df: pd.DataFrame, feature_list: list, vol_window: int = 20) -> pd.DataFrame:
     """Calcula features para o modelo a partir de OHLCV."""
     feats = pd.DataFrame(index=df.index)
@@ -39,8 +38,7 @@ def _compute_features(df: pd.DataFrame, feature_list: list, vol_window: int = 20
     return feats
 
 
-# ─── Gaussian HMM via Baum-Welch (EM) ──────────────────────────────────────
-
+# Gaussian HMM via Baum-Welch (EM)
 def _log_multivariate_normal_density(X, means, covars):
     """Log-pdf de N(mean, cov) para cada (obs, estado). Retorna (T, n_states)."""
     T, D = X.shape
@@ -349,8 +347,7 @@ def _label_regimes(states, n_states, close_aligned):
     return labels, label_map
 
 
-# ─── Markov Switching via statsmodels ────────────────────────────────────────
-
+# Markov Switching via statsmodels
 def _fit_markov_switching(X_series: pd.Series, n_states: int):
     """Fit Markov Switching Regression via statsmodels."""
     from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
@@ -365,8 +362,7 @@ def _fit_markov_switching(X_series: pd.Series, n_states: int):
     return result
 
 
-# ─── Change-Point Detection (Binary Segmentation L2) ────────────────────────
-
+# Change-Point Detection (Binary Segmentation L2)
 def _detect_changepoints(X: np.ndarray, close_aligned, min_segment: int = 20):
     """Change-point detection usando Binary Segmentation com custo L2."""
     T = len(X)
@@ -445,8 +441,7 @@ def _binary_segmentation(X, start, end, min_size, breakpoints, max_bkps=8):
         _binary_segmentation(X, best_bp, end, min_size, breakpoints, max_bkps)
 
 
-# ─── Metrics by regime ───────────────────────────────────────────────────────
-
+# Metrics by regime
 def _infer_bars_per_year(index: pd.DatetimeIndex) -> float:
     """Infere quantas barras existem por ano a partir dos dados reais."""
     if len(index) < 2:
@@ -526,8 +521,7 @@ def _metrics_by_regime(close_aligned, labels):
     return results
 
 
-# ─── Transition matrix ──────────────────────────────────────────────────────
-
+# Transition matrix
 def _transition_matrix(states, n_states):
     """Calcula matriz de transicao empirica (state x state)."""
     mat = np.zeros((n_states, n_states))
@@ -540,8 +534,7 @@ def _transition_matrix(states, n_states):
     return np.round(mat * 100, 1).tolist()
 
 
-# ─── Main entry point ───────────────────────────────────────────────────────
-
+# Main entry point
 def detect_regimes(
     df: pd.DataFrame,
     method: str = "hmm",

@@ -293,7 +293,7 @@ def run(df: pd.DataFrame, params: dict) -> dict:
     hours_utc = feat["hours_utc"]
     exposure = feat["exposure"]
 
-    # ── Loop do backtest ──────────────────────────────────────────────────
+    # Loop do backtest
     equity = initial_capital
     eq_curve = np.empty(N)
     trades = []
@@ -374,7 +374,7 @@ def run(df: pd.DataFrame, params: dict) -> dict:
         })
         i = j + 1
 
-    # ── Métricas (mesmo contrato das demais estratégias) ─────────────────
+    # Métricas (mesmo contrato das demais estratégias)
     eq = eq_curve
     pnls = [t["pnl_pct"] for t in trades]
     wins = [p for p in pnls if p > 0]

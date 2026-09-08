@@ -23,28 +23,13 @@ from providers.market_data import get_exchange, normalize_symbol
 
 terminal_bp = Blueprint("terminal", __name__, url_prefix="/api/terminal")
 
-# ── cache TTL genérico ───────────────────────────────────────────────────
-_CACHE: dict = {}
+# cache TTL genérico
+from common import ttl_cache, to_float
+
+_cached = ttl_cache()
 
 
-def _cached(key, ttl_s, fn):
-    hit = _CACHE.get(key)
-    if hit and time.time() - hit[0] < ttl_s:
-        return hit[1]
-    data = fn()
-    _CACHE[key] = (time.time(), data)
-    return data
-
-
-def _safe_float(v):
-    try:
-        return float(v) if v is not None else None
-    except (TypeError, ValueError):
-        return None
-
-
-# ── /watch — tickers ao vivo da watchlist ────────────────────────────────
-
+# /watch — tickers ao vivo da watchlist
 @terminal_bp.get("/watch")
 def watch():
     try:
@@ -71,12 +56,12 @@ def watch():
                     "base": base.upper(),
                     "symbol": sym,
                     "market": "crypto",
-                    "last": _safe_float(t.get("last")),
-                    "pct24h": _safe_float(t.get("percentage")),
-                    "high24": _safe_float(t.get("high")),
-                    "low24": _safe_float(t.get("low")),
-                    "vol_usd": _safe_float(t.get("quoteVolume")),
-                    "funding": _safe_float(fr.get("fundingRate")),
+                    "last": to_float(t.get("last")),
+                    "pct24h": to_float(t.get("percentage")),
+                    "high24": to_float(t.get("high")),
+                    "low24": to_float(t.get("low")),
+                    "vol_usd": to_float(t.get("quoteVolume")),
+                    "funding": to_float(fr.get("fundingRate")),
                     "next_funding_ts": fr.get("fundingTimestamp") or fr.get("nextFundingTimestamp"),
                 })
         if tradfi:
@@ -88,8 +73,7 @@ def watch():
         return jsonify({"error": str(e)[:300]}), 500
 
 
-# ── /spark — closes p/ sparkline ─────────────────────────────────────────
-
+# /spark — closes p/ sparkline
 @terminal_bp.get("/spark")
 def spark():
     try:
@@ -107,7 +91,7 @@ def spark():
         def fetch():
             ex = get_exchange(exchange)
             raw = ex.fetch_ohlcv(sym, timeframe=tf, limit=bars)
-            return [_safe_float(c[4]) for c in raw]
+            return [to_float(c[4]) for c in raw]
 
         closes = _cached(("spark", exchange, sym, tf, bars), 600, fetch)
         return jsonify({"closes": closes})
@@ -115,8 +99,7 @@ def spark():
         return jsonify({"error": str(e)[:300]}), 500
 
 
-# ── /screener — ranking de perps ─────────────────────────────────────────
-
+# /screener — ranking de perps
 def _kline_stats(ex, sym):
     """Retornos 1d/7d/30d e ATR14% do símbolo, de klines diárias (cache 30min)."""
     def fetch():
@@ -169,19 +152,18 @@ def screener():
             rows.append({
                 "base": sym.split("/")[0],
                 "symbol": sym,
-                "last": _safe_float(t.get("last")),
-                "pct24h": _safe_float(t.get("percentage")),
-                "vol_usd": _safe_float(t.get("quoteVolume")),
-                "funding": _safe_float(fr.get("fundingRate")),
-                **{k: _safe_float(v) for k, v in stats.items()},
+                "last": to_float(t.get("last")),
+                "pct24h": to_float(t.get("percentage")),
+                "vol_usd": to_float(t.get("quoteVolume")),
+                "funding": to_float(fr.get("fundingRate")),
+                **{k: to_float(v) for k, v in stats.items()},
             })
         return jsonify({"rows": rows, "ts": int(time.time() * 1000)})
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
 
 
-# ── /des — visão geral do instrumento ────────────────────────────────────
-
+# /des — visão geral do instrumento
 @terminal_bp.get("/des")
 def des():
     try:
@@ -247,28 +229,27 @@ def des():
             "base": base.upper(),
             "symbol": sym,
             "exchange": exchange,
-            "last": _safe_float(ticker.get("last")),
-            "pct24h": _safe_float(ticker.get("percentage")),
-            "high24": _safe_float(ticker.get("high")),
-            "low24": _safe_float(ticker.get("low")),
-            "vol_usd": _safe_float(ticker.get("quoteVolume")),
-            "open_interest": _safe_float(oi.get("openInterestAmount")),
-            "open_interest_usd": _safe_float(oi.get("openInterestValue")),
-            "funding": _safe_float(fr.get("fundingRate")),
+            "last": to_float(ticker.get("last")),
+            "pct24h": to_float(ticker.get("percentage")),
+            "high24": to_float(ticker.get("high")),
+            "low24": to_float(ticker.get("low")),
+            "vol_usd": to_float(ticker.get("quoteVolume")),
+            "open_interest": to_float(oi.get("openInterestAmount")),
+            "open_interest_usd": to_float(oi.get("openInterestValue")),
+            "funding": to_float(fr.get("fundingRate")),
             "next_funding_ts": fr.get("fundingTimestamp") or fr.get("nextFundingTimestamp"),
             "funding_hist": funding_hist,
             "fees": fees,
-            "min_qty": _safe_float(((limits.get("amount") or {}).get("min"))),
-            "min_notional": _safe_float(((limits.get("cost") or {}).get("min"))),
-            "contract_size": _safe_float(mkt.get("contractSize")),
-            **{k: _safe_float(v) for k, v in stats.items()},
+            "min_qty": to_float(((limits.get("amount") or {}).get("min"))),
+            "min_notional": to_float(((limits.get("cost") or {}).get("min"))),
+            "contract_size": to_float(mkt.get("contractSize")),
+            **{k: to_float(v) for k, v in stats.items()},
         })
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
 
 
-# ── Mercado macro/derivativos: juros, crédito, opções, book ─────────────
-
+# Mercado macro/derivativos: juros, crédito, opções, book
 @terminal_bp.get("/rates")
 def rates():
     try:
@@ -319,8 +300,7 @@ def options_strategy():
         return jsonify({"error": str(e)[:300]}), 500
 
 
-# ── GT — análise técnica multi-ativo ─────────────────────────────────────
-
+# GT — análise técnica multi-ativo
 @terminal_bp.post("/chart")
 def chart():
     try:
@@ -340,8 +320,7 @@ def chart():
         return jsonify({"error": str(e)[:300]}), 500
 
 
-# ── ALTD — dados alternativos ────────────────────────────────────────────
-
+# ALTD — dados alternativos
 @terminal_bp.get("/alt/indicators")
 def alt_indicators():
     try:
@@ -418,8 +397,7 @@ def alt_onchain_coin():
         return jsonify({"error": str(e)[:300]}), 500
 
 
-# ── OMS/EMS — execução de ordens ─────────────────────────────────────────
-
+# OMS/EMS — execução de ordens
 @terminal_bp.get("/oms/accounts")
 def oms_accounts():
     try:
@@ -492,8 +470,7 @@ def oms_reset():
         return jsonify({"error": str(e)[:300]}), 500
 
 
-# ── CDTY — painel de commodities ─────────────────────────────────────────
-
+# CDTY — painel de commodities
 @terminal_bp.get("/cdty/overview")
 def cdty_overview():
     try:
@@ -567,8 +544,7 @@ def book():
         return jsonify({"error": str(e)[:300]}), 500
 
 
-# ── EA — análise completa de empresa (estilo Bloomberg FA) ───────────────
-
+# EA — análise completa de empresa (estilo Bloomberg FA)
 @terminal_bp.get("/ea")
 def ea():
     try:
@@ -581,8 +557,7 @@ def ea():
         return jsonify({"error": str(e)[:300]}), 500
 
 
-# ── EQS — screening fundamentalista (Yahoo screener server-side) ────────
-
+# EQS — screening fundamentalista (Yahoo screener server-side)
 @terminal_bp.get("/eqs/meta")
 def eqs_meta():
     try:
@@ -614,8 +589,7 @@ def eqs_funds():
         return jsonify({"error": str(e)[:300]}), 500
 
 
-# ── Alertas (preço/funding) ──────────────────────────────────────────────
-
+# Alertas (preço/funding)
 _ALERTS_FILE = Path(__file__).parents[1] / "data" / "alerts_data.json"
 _alerts_lock = threading.Lock()
 _ALERT_KINDS = ("price_above", "price_below", "funding_above", "funding_below",
@@ -648,7 +622,7 @@ def alerts_create():
     body = request.get_json(force=True) or {}
     kind = body.get("kind")
     symbol = (body.get("symbol") or "").strip().upper()
-    level = _safe_float(body.get("level"))
+    level = to_float(body.get("level"))
     market = (body.get("market") or "crypto").lower()
     if kind not in _ALERT_KINDS:
         return jsonify({"error": f"kind deve ser um de {_ALERT_KINDS}"}), 400
@@ -742,8 +716,8 @@ def _alert_watcher():
                     frs = {}
                 for b, s in syms.items():
                     quotes[(exch, b)] = {
-                        "price": _safe_float((tickers.get(s) or {}).get("last")),
-                        "funding": _safe_float((frs.get(s) or {}).get("fundingRate")),
+                        "price": to_float((tickers.get(s) or {}).get("last")),
+                        "funding": to_float((frs.get(s) or {}).get("fundingRate")),
                     }
             changed = False
             for a in active:
@@ -825,8 +799,7 @@ def _signal_alert_watcher():
             pass
 
 
-# ── /news — RSS agregado ─────────────────────────────────────────────────
-
+# /news — RSS agregado
 _NEWS_SOURCES = [
     # (nome, url, categoria)
     ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/", "crypto"),

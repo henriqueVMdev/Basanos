@@ -39,8 +39,7 @@ for sym in SYMS:
         continue
 
 
-# ── indicadores (mesma matematica do backtesting.py) ─────────────────────
-
+# indicadores (mesma matematica do backtesting.py)
 def _wma(x, n):
     w = np.arange(1, n + 1, dtype=float)
     return pd.Series(x).rolling(n).apply(
@@ -119,8 +118,7 @@ def variant_signal(states, mode, long_only):
     return s
 
 
-# ── grid no treino ───────────────────────────────────────────────────────
-
+# grid no treino
 MA_TYPES = ["SMA", "EMA", "HMA"]
 MA_LENS = [20, 50, 100, 200]
 LOOKBACKS = [3, 5, 10]

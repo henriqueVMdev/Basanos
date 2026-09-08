@@ -371,7 +371,7 @@ def _run_backtest_mm9(df: pd.DataFrame, params: dict):
                 open_position(i, d, entry_price, st["armed_stop"])
                 st["armed"] = False
 
-        # ── 2. SAÍDAS da posição (vale já no candle do fill) ────────────────
+        # 2. SAÍDAS da posição (vale já no candle do fill)
         if st["position"] != 0:
             d = st["position"]
             fill_bar = i == st["entry_bar"]
@@ -452,7 +452,7 @@ def _run_backtest_mm9(df: pd.DataFrame, params: dict):
                         st["armed_stop"] = stop
                         st["armed_bar"] = i
 
-        # ── 4. Equity mark-to-market ────────────────────────────────────────
+        # 4. Equity mark-to-market
         if st["position"] != 0 and st["trade"] is not None:
             remaining = st["size1"] + st["size2"]
             unreal = st["position"] * (c[i] - st["entry"]) / st["entry"]

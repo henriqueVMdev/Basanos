@@ -12,29 +12,14 @@ dentro do peer group que o usuário definiu por setor/país).
 from __future__ import annotations
 
 import time
+from bisect import bisect_left
 
-_CACHE: dict = {}
+from common import ttl_cache, to_float
 
-
-def _cached(key, ttl_s, fn):
-    hit = _CACHE.get(key)
-    if hit and time.time() - hit[0] < ttl_s:
-        return hit[1]
-    data = fn()
-    _CACHE[key] = (time.time(), data)
-    return data
+_cached = ttl_cache()
 
 
-def _f(v):
-    try:
-        f = float(v)
-        return f if f == f else None
-    except (TypeError, ValueError):
-        return None
-
-
-# ── metadados p/ a UI ────────────────────────────────────────────────────
-
+# metadados p/ a UI
 REGIONS = [
     ("us", "Estados Unidos"), ("br", "Brasil"), ("gb", "Reino Unido"),
     ("de", "Alemanha"), ("fr", "França"), ("jp", "Japão"), ("cn", "China"),
@@ -108,8 +93,7 @@ def meta():
     }
 
 
-# ── screening de ações ───────────────────────────────────────────────────
-
+# screening de ações
 def _build_query(filters: dict):
     import yfinance as yf
     EQ = yf.EquityQuery
@@ -129,7 +113,7 @@ def _build_query(filters: dict):
         if key not in METRICS or not isinstance(spec, dict):
             continue
         field = METRICS[key][0]
-        lo, hi = _f(spec.get("min")), _f(spec.get("max"))
+        lo, hi = to_float(spec.get("min")), to_float(spec.get("max"))
         if lo is not None and hi is not None:
             nodes.append(EQ("btwn", [field, lo, hi]))
         elif lo is not None:
@@ -147,16 +131,16 @@ def _quote_row(q: dict) -> dict:
         "symbol": q.get("symbol"),
         "name": (q.get("shortName") or q.get("longName") or "")[:40],
         "exchange": q.get("exchange"),
-        "last": _f(q.get("regularMarketPrice")),
-        "pct_change": _f(q.get("regularMarketChangePercent")),
-        "mcap": _f(q.get("marketCap")),
-        "pe": _f(q.get("trailingPE")),
-        "forward_pe": _f(q.get("forwardPE")),
-        "pb": _f(q.get("priceToBook")),
-        "eps": _f(q.get("epsTrailingTwelveMonths")),
-        "div_yield": _f(q.get("dividendYield")),
-        "avg_vol": _f(q.get("averageDailyVolume3Month")),
-        "chg_52w": _f(q.get("fiftyTwoWeekChangePercent")),
+        "last": to_float(q.get("regularMarketPrice")),
+        "pct_change": to_float(q.get("regularMarketChangePercent")),
+        "mcap": to_float(q.get("marketCap")),
+        "pe": to_float(q.get("trailingPE")),
+        "forward_pe": to_float(q.get("forwardPE")),
+        "pb": to_float(q.get("priceToBook")),
+        "eps": to_float(q.get("epsTrailingTwelveMonths")),
+        "div_yield": to_float(q.get("dividendYield")),
+        "avg_vol": to_float(q.get("averageDailyVolume3Month")),
+        "chg_52w": to_float(q.get("fiftyTwoWeekChangePercent")),
         "currency": q.get("currency"),
         "quote_type": q.get("quoteType"),
     }
@@ -168,20 +152,15 @@ def _pct_ranks(values: list) -> list:
     n = len(known)
     if n < 2:
         return [None] * len(values)
-    out = []
-    for v in values:
-        if v is None:
-            out.append(None)
-        else:
-            below = sum(1 for k in known if k < v)
-            out.append(below / (n - 1))
-    return out
+    return [None if v is None else bisect_left(known, v) / (n - 1) for v in values]
 
 
 def _add_scores(rows: list) -> None:
     """Score relativo 0-100 dentro do conjunto filtrado (peer group):
     valor (P/E e P/B baixos), dividendo (yield alto), momento (52s alto)."""
-    inv = lambda v: 1 / v if v and v > 0 else None
+    def inv(v):
+        return 1 / v if v and v > 0 else None
+
     val_pe = _pct_ranks([inv(r["pe"]) for r in rows])
     val_pb = _pct_ranks([inv(r["pb"]) for r in rows])
     div = _pct_ranks([r["div_yield"] for r in rows])
@@ -224,8 +203,7 @@ def run_equity_screen(filters: dict) -> dict:
     return _cached(key, 300, fetch)
 
 
-# ── screening de fundos / ETFs / bonds (screens prontos) ─────────────────
-
+# screening de fundos / ETFs / bonds (screens prontos)
 def run_fund_screen(screen_key: str) -> dict:
     if screen_key not in {k for k, _ in FUND_SCREENS}:
         raise ValueError(f"screen deve ser um de {[k for k, _ in FUND_SCREENS]}")
@@ -240,14 +218,14 @@ def run_fund_screen(screen_key: str) -> dict:
                 "name": (q.get("shortName") or q.get("longName") or "")[:44],
                 "quote_type": q.get("quoteType"),
                 "exchange": q.get("exchange"),
-                "last": _f(q.get("regularMarketPrice")),
-                "pct_change": _f(q.get("regularMarketChangePercent")),
-                "ytd": _f(q.get("ytdReturn")),
-                "chg_52w": _f(q.get("fiftyTwoWeekChangePercent")),
-                "net_assets": _f(q.get("netAssets")),
-                "div_yield": _f(q.get("trailingAnnualDividendYield")),
-                "expense_ratio": _f(q.get("netExpenseRatio")),
-                "avg_vol": _f(q.get("averageDailyVolume3Month")),
+                "last": to_float(q.get("regularMarketPrice")),
+                "pct_change": to_float(q.get("regularMarketChangePercent")),
+                "ytd": to_float(q.get("ytdReturn")),
+                "chg_52w": to_float(q.get("fiftyTwoWeekChangePercent")),
+                "net_assets": to_float(q.get("netAssets")),
+                "div_yield": to_float(q.get("trailingAnnualDividendYield")),
+                "expense_ratio": to_float(q.get("netExpenseRatio")),
+                "avg_vol": to_float(q.get("averageDailyVolume3Month")),
             })
         return {"rows": rows, "total_matches": resp.get("total"),
                 "ts": int(time.time() * 1000)}

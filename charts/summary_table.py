@@ -16,7 +16,7 @@ SORT_OPTIONS = {
 
 
 def render_summary_table(df: pd.DataFrame, top_n: int = TOP_N):
-    """Renderiza tabela das top-N estrategias com ordenacao por qualquer metrica."""
+    """Tabela das top-N estrategias. Retorna a linha selecionada, ou None."""
     col_sort, col_order = st.columns([2, 1])
     with col_sort:
         sort_label = st.selectbox(
@@ -33,7 +33,7 @@ def render_summary_table(df: pd.DataFrame, top_n: int = TOP_N):
         st.warning(f"Coluna '{sort_col}' nao encontrada.")
         return None
 
-    ascending = ascending_toggle if ascending_toggle else default_asc
+    ascending = ascending_toggle or default_asc
     top = df.sort_values(sort_col, ascending=ascending).head(top_n)
 
     display_cols = [
@@ -42,8 +42,6 @@ def render_summary_table(df: pd.DataFrame, top_n: int = TOP_N):
     ]
     available = [c for c in display_cols if c in top.columns]
     top = top[available].reset_index(drop=True)
-
-    top_internal = top.copy()
 
     rename = {
         "ativo": "Ativo",
@@ -74,7 +72,7 @@ def render_summary_table(df: pd.DataFrame, top_n: int = TOP_N):
     )
     styled = styled.format(precision=2, na_rep="-")
 
-    # Gradient na coluna usada para ordenar
+    # Gradiente na coluna de ordenacao
     display_sort_col = rename.get(sort_col, sort_col)
     if display_sort_col in top_display.columns:
         styled = styled.background_gradient(
@@ -95,7 +93,7 @@ def render_summary_table(df: pd.DataFrame, top_n: int = TOP_N):
 
     if event and event.selection and event.selection.rows:
         selected_idx = event.selection.rows[0]
-        rank_val = top_internal.iloc[selected_idx]["rank"]
+        rank_val = top.iloc[selected_idx]["rank"]
         original_row = df[df["rank"] == rank_val].iloc[0]
         return original_row
 

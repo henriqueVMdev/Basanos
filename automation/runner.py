@@ -45,7 +45,7 @@ class Runner(threading.Thread):
         self.last_error: str | None = None
         self.clock_skew_ms: int | None = None
 
-    # ── ciclo ────────────────────────────────────────────────────────────
+    # ciclo
     def run(self):
         store.init_db()
         while not self._stop.is_set():
@@ -60,7 +60,7 @@ class Runner(threading.Thread):
     def stop(self):
         self._stop.set()
 
-    # ── tick ─────────────────────────────────────────────────────────────
+    # tick
     def _tick(self):
         deps = store.list_deployments(status="running")
         if not deps:
@@ -154,7 +154,7 @@ class Runner(threading.Thread):
         closed = ts + tf_ms(interval) <= now_ex
         return df[closed]
 
-    # ── por deployment ───────────────────────────────────────────────────
+    # por deployment
     def _process_deployment(self, dep, df_closed, interval):
         if dep["mode"] != "paper":
             # modo demo entra na Fase 3 (executor_bybit)
@@ -341,7 +341,7 @@ class Runner(threading.Thread):
                else f"Mercado {lado} na próxima abertura")
         store.add_event(dep_id, "order_placed", msg)
 
-    # ── status ───────────────────────────────────────────────────────────
+    # status
     def status(self) -> dict:
         return {
             "alive": self.is_alive(),

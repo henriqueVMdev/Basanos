@@ -22,6 +22,8 @@ from pathlib import Path
 import ccxt
 from dotenv import load_dotenv
 
+from common import to_float
+
 # Carrega o .env da raiz do projeto (idempotente).
 load_dotenv(Path(__file__).parents[1] / ".env")
 
@@ -36,10 +38,8 @@ _PNL_KEYS = (
 
 
 def _to_float(v, default=0.0):
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return default
+    x = to_float(v)
+    return default if x is None else x
 
 
 def _build_exchange(name: str):

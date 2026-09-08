@@ -29,7 +29,7 @@ import pandas as pd
 from providers.market_data import fetch_ohlcv
 import strategies.mm9_pullback as mm9
 
-# ── parâmetros (defaults da estratégia / do .pine) ───────────────────────
+# parâmetros (defaults da estratégia / do .pine)
 TP, SL, MAX_BARS = 0.5, 1.5, 48
 RISK, LEV_CAP = 1.0, 2.0
 COMMISSION_SIDE = 0.025 / 100          # 0.025% por ponta (pine atual)
@@ -156,7 +156,7 @@ def stats(pnls, label, eq0=50_000.0, eq1=None):
           + (f" | retorno {ret:+.1f}%" if ret is not None else ""))
 
 
-# ── 1) App (bruto e com comissão do TV p/ isolar custo) ─────────────────
+# 1) App (bruto e com comissão do TV p/ isolar custo)
 res = mm9.run(df, {"initial_capital": 50_000.0})
 app_pnls = [t["pnl_pct"] for t in res["trades"]]
 app_eq = res["metrics"]["final_equity"]
@@ -169,7 +169,7 @@ for p in app_net:
     eq *= 1 + p / 100
 stats(app_net, "APP c/ comissao 0.025%/ponta", eq1=eq)
 
-# ── 2) TV emulado ────────────────────────────────────────────────────────
+# 2) TV emulado
 eq_tv, tv_trades = run_tv_emulation()
 tv_pnls = [t["pnl"] for t in tv_trades]
 stats(tv_pnls, "TV EMULADO (toque+shape+comissao)", eq1=eq_tv)

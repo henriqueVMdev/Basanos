@@ -3,7 +3,6 @@ import streamlit as st
 import plotly.express as px
 
 
-# Parametros categoricos e seus nomes de exibicao
 CATEGORICAL_PARAMS = {
     "ma": "Tipo de Media",
     "saida": "Tipo de Saida",
@@ -13,7 +12,6 @@ CATEGORICAL_PARAMS = {
     "entry_zone": "Entry Zone",
 }
 
-# Parametros numericos e seus nomes de exibicao
 NUMERIC_PARAMS = {
     "periodo": "Periodo da Media",
     "lookback": "Lookback",
@@ -25,7 +23,7 @@ NUMERIC_PARAMS = {
 
 
 def render_best_params(df: pd.DataFrame, top_n: int = 20):
-    """Analisa as top parametros e mostra os melhores parametros para testes futuros."""
+    """Frequencia e distribuicao dos parametros nas top-N, com faixas sugeridas."""
     if "score" not in df.columns:
         st.warning("Coluna 'Score' necessaria para analise de parametros.")
         return
@@ -88,7 +86,6 @@ def render_best_params(df: pd.DataFrame, top_n: int = 20):
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-    # Tabela resumo com ranges ideais
     st.markdown("**Resumo - Faixas Recomendadas para Proximos Testes**")
     summary_rows = []
 

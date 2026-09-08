@@ -13,28 +13,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 
-_CACHE: dict = {}
+from common import ttl_cache, to_float
+
+_cached = ttl_cache()
 
 
-def _cached(key, ttl_s, fn):
-    hit = _CACHE.get(key)
-    if hit and time.time() - hit[0] < ttl_s:
-        return hit[1]
-    data = fn()
-    _CACHE[key] = (time.time(), data)
-    return data
-
-
-def _f(v):
-    try:
-        f = float(v)
-        return f if f == f else None
-    except (TypeError, ValueError):
-        return None
-
-
-# ── grupos do painel ─────────────────────────────────────────────────────
-
+# grupos do painel
 GROUPS = [
     ("Energia", [("CL=F", "Petróleo WTI"), ("BZ=F", "Brent"),
                  ("NG=F", "Gás Natural"), ("RB=F", "Gasolina RBOB"),
@@ -66,8 +50,7 @@ def overview() -> dict:
     return _cached(("cdty_overview",), 60, fetch)
 
 
-# ── curvas futuras ───────────────────────────────────────────────────────
-
+# curvas futuras
 _MONTH_CODES = {1: "F", 2: "G", 3: "H", 4: "J", 5: "K", 6: "M",
                 7: "N", 8: "Q", 9: "U", 10: "V", 11: "X", 12: "Z"}
 
@@ -120,7 +103,7 @@ def futures_curve(root: str) -> dict:
         def one(c):
             sym, code, dt = c
             try:
-                px = _f(yf.Ticker(sym).fast_info["last_price"])
+                px = to_float(yf.Ticker(sym).fast_info["last_price"])
                 return {"symbol": sym, "code": code, "month": dt.strftime("%Y-%m"),
                         "price": px}
             except Exception:
@@ -131,7 +114,7 @@ def futures_curve(root: str) -> dict:
 
         spot = None
         try:
-            spot = _f(yf.Ticker(f"{root}=F").fast_info["last_price"])
+            spot = to_float(yf.Ticker(f"{root}=F").fast_info["last_price"])
         except Exception:
             pass
 
@@ -157,8 +140,7 @@ def curves_meta() -> list:
     return [{"key": k, "label": v[1], "unit": v[3]} for k, v in CURVES.items()]
 
 
-# ── clima nas regiões produtoras (met.no) ────────────────────────────────
-
+# clima nas regiões produtoras (met.no)
 REGIONS = [
     ("Corn Belt — Iowa, EUA", 41.9, -93.6, "milho · soja"),
     ("Mato Grosso, Brasil", -12.6, -55.7, "soja · milho · algodão"),
@@ -189,8 +171,8 @@ def _metno_region(name, lat, lon, crops):
         d = e.get("data", {})
         nxt = d.get("next_1_hours") or d.get("next_6_hours")
         if nxt:
-            precip += _f(nxt.get("details", {}).get("precipitation_amount")) or 0
-        t = _f(d.get("instant", {}).get("details", {}).get("air_temperature"))
+            precip += to_float(nxt.get("details", {}).get("precipitation_amount")) or 0
+        t = to_float(d.get("instant", {}).get("details", {}).get("air_temperature"))
         if t is not None and (tmax is None or t > tmax):
             tmax = t
     flags = []
@@ -200,7 +182,7 @@ def _metno_region(name, lat, lon, crops):
         flags.append("chuva excessiva")
     if tmax is not None and tmax >= 35:
         flags.append("calor extremo")
-    # explicação didática: condição climática → efeito na safra → efeito no preço
+    # condição climática → efeito na safra → efeito no preço
     impact_map = {
         "seca": ("sem chuva a planta sofre e a colheita encolhe — oferta menor "
                  "com a mesma demanda: preço tende a SUBIR"),
@@ -233,8 +215,7 @@ def weather() -> dict:
     return _cached(("weather",), 3600, fetch)
 
 
-# ── frete & shipping (proxies de mercado) ────────────────────────────────
-
+# frete & shipping (proxies de mercado)
 SHIPPING = [
     ("BDRY", "ETF de futuros de frete seco (Baltic)", "dry bulk"),
     ("GOGL", "Golden Ocean", "dry bulk"),
@@ -265,8 +246,7 @@ def shipping() -> dict:
     return _cached(("shipping",), 120, fetch)
 
 
-# ── estoques / produção / demanda (EIA — chave grátis opcional) ──────────
-
+# estoques / produção / demanda (EIA — chave grátis opcional)
 _EIA_SERIES = [
     ("petroleum/stoc/wstk", "WCESTUS1", "Estoques de petróleo bruto (EUA)", "mil bbl"),
     ("petroleum/sum/sndw", "WCRFPUS2", "Produção de petróleo (EUA)", "mil bbl/d"),
@@ -302,8 +282,8 @@ def inventories() -> dict:
                 series.append({
                     "id": sid, "label": label, "unit": unit,
                     "dates": [x["period"] for x in rows],
-                    "values": [_f(x["value"]) for x in rows],
-                    "now": _f(rows[-1]["value"]) if rows else None,
+                    "values": [to_float(x["value"]) for x in rows],
+                    "now": to_float(rows[-1]["value"]) if rows else None,
                 })
             except Exception:
                 series.append({"id": sid, "label": label, "error": True})

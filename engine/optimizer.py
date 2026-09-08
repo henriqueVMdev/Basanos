@@ -25,10 +25,7 @@ from engine.backtesting import (
 )
 
 
-# ==============================
 # 1. GRADE DE PARÂMETROS
-# ==============================
-
 GRID_RAPIDO = {
     "ma_type":      ["HMA", "EMA"],
     "ma_length":    [21, 50, 100],
@@ -86,10 +83,7 @@ GRID_CUSTOM = {
 }
 
 
-# ==============================
 # 2. GERAÇÃO DE COMBINAÇÕES
-# ==============================
-
 def generate_configs(grid: Dict[str, List], base_cfg: Config) -> List[Config]:
     """Gera todas as combinações válidas de parâmetros."""
     keys = list(grid.keys())
@@ -162,10 +156,7 @@ def _is_valid(params: dict) -> bool:
     return True
 
 
-# ==============================
 # 3. MÉTRICAS
-# ==============================
-
 def calc_metrics(st: BacktestState, cfg: Config) -> Dict[str, Any]:
     """Calcula métricas de performance para ranking."""
     trades = st.trades
@@ -270,10 +261,7 @@ def calc_metrics(st: BacktestState, cfg: Config) -> Dict[str, Any]:
     }
 
 
-# ==============================
 # 4. OTIMIZADOR
-# ==============================
-
 def optimize(df: pd.DataFrame, grid: Dict, base_cfg: Config, rank_by: str = "Score") -> pd.DataFrame:
     """Roda backtest para todas as combinações e retorna DataFrame rankeado."""
 
@@ -322,10 +310,7 @@ def optimize(df: pd.DataFrame, grid: Dict, base_cfg: Config, rank_by: str = "Sco
     return results_df
 
 
-# ==============================
 # 5. DISPLAY
-# ==============================
-
 def print_top_results(results_df: pd.DataFrame, top_n: int = 10, rank_by: str = "Score"):
     """Imprime os melhores resultados formatados."""
 
@@ -394,10 +379,7 @@ def print_top_results(results_df: pd.DataFrame, top_n: int = 10, rank_by: str = 
     print()
 
 
-# ==============================
 # 6. MAIN
-# ==============================
-
 def main():
     parser = argparse.ArgumentParser(description="Otimizador — Estratégia DePaula v2")
 

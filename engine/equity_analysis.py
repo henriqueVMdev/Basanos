@@ -12,24 +12,9 @@ from __future__ import annotations
 
 import time
 
-_CACHE: dict = {}
+from common import ttl_cache, to_float
 
-
-def _cached(key, ttl_s, fn):
-    hit = _CACHE.get(key)
-    if hit and time.time() - hit[0] < ttl_s:
-        return hit[1]
-    data = fn()
-    _CACHE[key] = (time.time(), data)
-    return data
-
-
-def _f(v):
-    try:
-        f = float(v)
-        return f if f == f else None
-    except (TypeError, ValueError):
-        return None
+_cached = ttl_cache()
 
 
 def _safe(fn, default=None):
@@ -71,7 +56,7 @@ def _extract(df, rows, n=5):
     out = {"periods": [c.strftime("%Y-%m") for c in cols], "data": {}}
     for yh_name, key in rows:
         if yh_name in df.index:
-            vals = [_f(df.loc[yh_name, c]) for c in cols]
+            vals = [to_float(df.loc[yh_name, c]) for c in cols]
             if any(v is not None for v in vals):
                 out["data"][key] = vals
     # margens calculadas (income)
@@ -114,12 +99,12 @@ def _peers(yf_sym: str, sector: str | None, mcap) -> list:
         peers.append({
             "symbol": x.get("symbol"),
             "name": (x.get("shortName") or "")[:28],
-            "mcap": _f(x.get("marketCap")),
-            "pe": _f(x.get("trailingPE")),
-            "forward_pe": _f(x.get("forwardPE")),
-            "pb": _f(x.get("priceToBook")),
-            "div_yield": _f(x.get("dividendYield")),
-            "chg_52w": _f(x.get("fiftyTwoWeekChangePercent")),
+            "mcap": to_float(x.get("marketCap")),
+            "pe": to_float(x.get("trailingPE")),
+            "forward_pe": to_float(x.get("forwardPE")),
+            "pb": to_float(x.get("priceToBook")),
+            "div_yield": to_float(x.get("dividendYield")),
+            "chg_52w": to_float(x.get("fiftyTwoWeekChangePercent")),
         })
         if len(peers) >= 8:
             break
@@ -127,7 +112,7 @@ def _peers(yf_sym: str, sector: str | None, mcap) -> list:
 
 
 def analyze(symbol: str) -> dict:
-    from providers import tradfi_data
+    from providers import insider_data, tradfi_data
     yf_sym = tradfi_data.resolve(symbol)
 
     def fetch():
@@ -142,20 +127,20 @@ def analyze(symbol: str) -> dict:
             "country": info.get("country"), "currency": info.get("currency"),
             "exchange_name": info.get("fullExchangeName"),
             "summary": (info.get("longBusinessSummary") or "")[:500] or None,
-            "last": _f(info.get("currentPrice") or info.get("regularMarketPrice")),
-            "pct24h": _f(info.get("regularMarketChangePercent")),
-            "mcap": _f(info.get("marketCap")),
+            "last": to_float(info.get("currentPrice") or info.get("regularMarketPrice")),
+            "pct24h": to_float(info.get("regularMarketChangePercent")),
+            "mcap": to_float(info.get("marketCap")),
             "multiples": {
-                "pe": _f(info.get("trailingPE")),
-                "forward_pe": _f(info.get("forwardPE")),
-                "ev_ebitda": _f(info.get("enterpriseToEbitda")),
-                "pb": _f(info.get("priceToBook")),
-                "ps": _f(info.get("priceToSalesTrailing12Months")),
-                "peg": _f(info.get("trailingPegRatio")),
-                "div_yield": _f(info.get("dividendYield")),
-                "payout": _f(info.get("payoutRatio")),
-                "roe": _f(info.get("returnOnEquity")),
-                "beta": _f(info.get("beta")),
+                "pe": to_float(info.get("trailingPE")),
+                "forward_pe": to_float(info.get("forwardPE")),
+                "ev_ebitda": to_float(info.get("enterpriseToEbitda")),
+                "pb": to_float(info.get("priceToBook")),
+                "ps": to_float(info.get("priceToSalesTrailing12Months")),
+                "peg": to_float(info.get("trailingPegRatio")),
+                "div_yield": to_float(info.get("dividendYield")),
+                "payout": to_float(info.get("payoutRatio")),
+                "roe": to_float(info.get("returnOnEquity")),
+                "beta": to_float(info.get("beta")),
             },
             "ts": int(time.time() * 1000),
         }
@@ -170,7 +155,7 @@ def analyze(symbol: str) -> dict:
 
         # analistas: preço-alvo + recomendações
         out["price_targets"] = _safe(lambda: {
-            k: _f(v) for k, v in (t.analyst_price_targets or {}).items()})
+            k: to_float(v) for k, v in (t.analyst_price_targets or {}).items()})
         recs = _safe(lambda: t.recommendations_summary)
         if recs is not None and not recs.empty:
             r0 = recs.iloc[0]
@@ -187,10 +172,10 @@ def analyze(symbol: str) -> dict:
         ed = cal.get("Earnings Date")
         out["calendar"] = {
             "next_earnings": str(ed[0]) if isinstance(ed, list) and ed else None,
-            "eps_est": _f(cal.get("Earnings Average")),
-            "eps_low": _f(cal.get("Earnings Low")),
-            "eps_high": _f(cal.get("Earnings High")),
-            "revenue_est": _f(cal.get("Revenue Average")),
+            "eps_est": to_float(cal.get("Earnings Average")),
+            "eps_low": to_float(cal.get("Earnings Low")),
+            "eps_high": to_float(cal.get("Earnings High")),
+            "revenue_est": to_float(cal.get("Revenue Average")),
             "ex_dividend": str(cal.get("Ex-Dividend Date") or "") or None,
             "dividend_date": str(cal.get("Dividend Date") or "") or None,
         }
@@ -202,9 +187,9 @@ def analyze(symbol: str) -> dict:
             for ts_, row in edf.head(10).iterrows():
                 hist.append({
                     "date": ts_.strftime("%Y-%m-%d"),
-                    "eps_est": _f(row.get("EPS Estimate")),
-                    "eps_real": _f(row.get("Reported EPS")),
-                    "surprise_pct": _f(row.get("Surprise(%)")),
+                    "eps_est": to_float(row.get("EPS Estimate")),
+                    "eps_real": to_float(row.get("Reported EPS")),
+                    "surprise_pct": to_float(row.get("Surprise(%)")),
                 })
             out["earnings_history"] = hist
 
@@ -213,17 +198,17 @@ def analyze(symbol: str) -> dict:
         if mh is not None and not mh.empty:
             vals = mh["Value"].to_dict() if "Value" in mh else {}
             out["ownership"] = {
-                "insiders_pct": _f(vals.get("insidersPercentHeld")),
-                "institutions_pct": _f(vals.get("institutionsPercentHeld")),
-                "institutions_count": _f(vals.get("institutionsCount")),
+                "insiders_pct": to_float(vals.get("insidersPercentHeld")),
+                "institutions_pct": to_float(vals.get("institutionsPercentHeld")),
+                "institutions_count": to_float(vals.get("institutionsCount")),
             }
         ih = _safe(lambda: t.institutional_holders)
         if ih is not None and not ih.empty:
             out["top_holders"] = [{
                 "holder": r.get("Holder"),
-                "pct": _f(r.get("pctHeld")),
-                "shares": _f(r.get("Shares")),
-                "value": _f(r.get("Value")),
+                "pct": to_float(r.get("pctHeld")),
+                "shares": to_float(r.get("Shares")),
+                "value": to_float(r.get("Value")),
                 "date": str(r.get("Date Reported"))[:10],
             } for _, r in ih.head(10).iterrows()]
 
@@ -234,8 +219,8 @@ def analyze(symbol: str) -> dict:
                 "insider": r.get("Insider"),
                 "position": r.get("Position"),
                 "text": r.get("Text"),
-                "shares": _f(r.get("Shares")),
-                "value": _f(r.get("Value")),
+                "shares": to_float(r.get("Shares")),
+                "value": to_float(r.get("Value")),
                 "date": str(r.get("Start Date"))[:10],
             } for _, r in ins.head(15).iterrows()]
 
@@ -243,7 +228,7 @@ def analyze(symbol: str) -> dict:
         div = _safe(lambda: t.dividends)
         if div is not None and len(div):
             out["dividends"] = {
-                "recent": [{"date": ts_.strftime("%Y-%m-%d"), "amount": _f(v)}
+                "recent": [{"date": ts_.strftime("%Y-%m-%d"), "amount": to_float(v)}
                            for ts_, v in div.tail(12).items()],
                 "by_year": [{"year": int(y), "total": round(float(s), 4)}
                             for y, s in div.groupby(div.index.year).sum().tail(6).items()],
@@ -253,7 +238,7 @@ def analyze(symbol: str) -> dict:
         out["peers"] = _safe(lambda: _peers(yf_sym, info.get("sector"),
                                             out["mcap"]), [])
         out["smart_money"] = _safe(
-            lambda: __import__("insider_data").smart_money(
+            lambda: insider_data.smart_money(
                 yf_sym, info.get("country"), info.get("quoteType")),
             {"feeds": [], "sources": [], "errors": ["fontes indisponíveis"]})
         return out

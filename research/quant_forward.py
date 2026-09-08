@@ -64,7 +64,7 @@ print(f"\nAGREGADO FORWARD: n={len(p)} WR={(p>0).mean()*100:.1f}% "
       f"exp={p.mean():+.4f} PF={pf:.2f}")
 allf.to_csv(os.path.join(SCRATCH, "trades_carrymom_fwd.csv"), index=False)
 
-# ── Monte Carlo do challenge ─────────────────────────────────────────────
+# Monte Carlo do challenge
 allf["day"] = pd.to_datetime(allf["ts_entry"], unit="ms").dt.date
 days_pool = [g[["net_pct", "stop_dist_pct"]].values
              for _, g in allf.groupby("day", sort=True)]

@@ -646,7 +646,7 @@ def run(df, params: dict) -> dict:
     bt_df = result._df
     trades = result.trades
 
-    # ── Métricas ──────────────────────────────────────────────────────────
+    # Métricas
     total_return = (result.equity / cfg.initial_capital - 1) * 100
     wins = [t for t in trades if t.pnl_pct > 0]
     losses_t = [t for t in trades if t.pnl_pct <= 0]
@@ -753,7 +753,7 @@ def run(df, params: dict) -> dict:
             for t in trades
         ]
     else:
-        # ── Drawdown analytics ────────────────────────────────────────────
+        # Drawdown analytics
         net_profit = result.equity - cfg.initial_capital
         recovery_factor = _safe(float(net_profit / abs(max_dd * cfg.initial_capital / 100))) if max_dd < 0 else None
 
@@ -820,7 +820,7 @@ def run(df, params: dict) -> dict:
             for t in trades
         ]
 
-    # ── Séries para os gráficos de análise (candles + indicadores) ──────────
+    # Séries para os gráficos de análise (candles + indicadores)
     # Só montadas sob demanda (_charts), para não inchar a resposta padrão.
     chart = None
     if params.get("_charts"):

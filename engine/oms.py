@@ -33,29 +33,12 @@ from pathlib import Path
 _FILE = Path(__file__).parents[1] / "data" / "oms_data.json"
 _lock = threading.Lock()
 
-_cache: dict = {}
+from common import ttl_cache, to_float
+
+_cached = ttl_cache()
 
 
-def _cached(key, ttl_s, fn):
-    now = time.time()
-    hit = _cache.get(key)
-    if hit and now - hit[0] < ttl_s:
-        return hit[1]
-    val = fn()
-    _cache[key] = (now, val)
-    return val
-
-
-def _f(v):
-    try:
-        v = float(v)
-        return v if math.isfinite(v) else None
-    except (TypeError, ValueError):
-        return None
-
-
-# ── Persistência ─────────────────────────────────────────────────────────
-
+# Persistência
 _DEFAULT_STATE = {
     "config": {"paper_capital": 100_000.0, "paper_cash": 100_000.0},
     "orders": [],
@@ -81,8 +64,7 @@ def _save(st: dict) -> None:
                      encoding="utf-8")
 
 
-# ── Contas ───────────────────────────────────────────────────────────────
-
+# Contas
 _BYBIT_PREFIX = {"bybit_demo": "BYBIT_DEMO", "bybit_real": "BYBIT_REAL",
                  "bybit_prop": "BYBIT_PROP"}
 _bybit_clients: dict = {}
@@ -142,8 +124,7 @@ def _bybit_client(account: str):
     return ex
 
 
-# ── Cotação/mark por classe ──────────────────────────────────────────────
-
+# Cotação/mark por classe
 # meia-spread estimada (bps) quando o Yahoo não expõe bid/ask (ex.: fora do
 # pregão, futuros, FX) — usada nos fills paper e SEMPRE sinalizada
 _HALF_SPREAD_BPS = {"equity": 2.0, "fx": 1.0, "future": 3.0}
@@ -166,12 +147,12 @@ def mark(symbol: str, market: str, exchange: str = "bybit") -> dict:
 
         def fetch():
             t = get_exchange(exchange).fetch_ticker(pair)
-            bid, ask = _f(t.get("bid")), _f(t.get("ask"))
-            last = _f(t.get("last"))
+            bid, ask = to_float(t.get("bid")), to_float(t.get("ask"))
+            last = to_float(t.get("last"))
             return {"market": "crypto", "resolved": pair,
                     "bid": bid, "ask": ask, "last": last,
                     "mid": (bid + ask) / 2 if bid and ask else last,
-                    "adv_usd": _f(t.get("quoteVolume")),
+                    "adv_usd": to_float(t.get("quoteVolume")),
                     "delayed": False, "spread_estimated": False}
 
         return _cached(("mark", "c", pair), 5, fetch)
@@ -186,13 +167,13 @@ def mark(symbol: str, market: str, exchange: str = "bybit") -> dict:
         import yfinance as yf
         t = yf.Ticker(yf_sym)
         fi = t.fast_info
-        last = _f(fi["last_price"])
+        last = to_float(fi["last_price"])
         info = {}
         try:
             info = t.info or {}
         except Exception:
             pass
-        bid, ask = _f(info.get("bid")), _f(info.get("ask"))
+        bid, ask = to_float(info.get("bid")), to_float(info.get("ask"))
         estimated = False
         stale = (not bid or not ask or bid >= ask          # cruzado = dado velho
                  or (last and (abs(bid / last - 1) > 0.05
@@ -201,7 +182,7 @@ def mark(symbol: str, market: str, exchange: str = "bybit") -> dict:
             half = _HALF_SPREAD_BPS[_asset_class(yf_sym)] / 1e4
             bid, ask = last * (1 - half), last * (1 + half)
             estimated = True
-        adv_units = _f(info.get("averageVolume")) or _f(fi["last_volume"])
+        adv_units = to_float(info.get("averageVolume")) or to_float(fi["last_volume"])
         return {"market": "tradfi", "resolved": yf_sym,
                 "bid": bid, "ask": ask, "last": last,
                 "mid": (bid + ask) / 2 if bid and ask else last,
@@ -238,13 +219,12 @@ def _walk_book(levels: list, qty: float):
     return (cost / filled if filled else None), filled
 
 
-# ── Pré-trade analytics ──────────────────────────────────────────────────
-
+# Pré-trade analytics
 def pre_trade(body: dict) -> dict:
     symbol = (body.get("symbol") or "").strip().upper()
     market = (body.get("market") or "crypto").lower()
     side = (body.get("side") or "buy").lower()
-    qty = _f(body.get("qty"))
+    qty = to_float(body.get("qty"))
     exchange = (body.get("exchange") or "bybit").lower()
     order_type = (body.get("type") or "market").lower()
     if not symbol or not qty or qty <= 0:
@@ -314,8 +294,7 @@ def pre_trade(body: dict) -> dict:
     }
 
 
-# ── Ledger de posições ───────────────────────────────────────────────────
-
+# Ledger de posições
 def _pos_key(symbol: str, market: str) -> str:
     return f"{symbol.upper()}|{market}"
 
@@ -380,16 +359,15 @@ def _record_fill(st: dict, order: dict, qty: float, price: float,
                 order["side"], qty, price, fee)
 
 
-# ── Envio de ordens ──────────────────────────────────────────────────────
-
+# Envio de ordens
 def submit_order(body: dict) -> dict:
     account = (body.get("account") or "paper").lower()
     symbol = (body.get("symbol") or "").strip().upper()
     market = (body.get("market") or "crypto").lower()
     side = (body.get("side") or "").lower()
     order_type = (body.get("type") or "market").lower()
-    qty = _f(body.get("qty"))
-    limit_price = _f(body.get("limit_price"))
+    qty = to_float(body.get("qty"))
+    limit_price = to_float(body.get("limit_price"))
     exchange = (body.get("exchange") or "bybit").lower()
 
     if side not in ("buy", "sell"):
@@ -500,8 +478,7 @@ def cancel_order(order_id: str) -> dict:
         return o or order
 
 
-# ── Motor de fills paper (lazy: roda a cada poll do blotter) ─────────────
-
+# Motor de fills paper (lazy: roda a cada poll do blotter)
 def _check_paper_limits(st: dict) -> bool:
     changed = False
     for order in st["orders"]:
@@ -551,8 +528,8 @@ def _sync_bybit_orders(account: str) -> None:
             o = by_id.get(oid)
             if not o or o["status"] not in ("working", "partial"):
                 continue
-            filled = _f(res.get("filled")) or 0.0
-            avg = _f(res.get("average")) or _f(res.get("price"))
+            filled = to_float(res.get("filled")) or 0.0
+            avg = to_float(res.get("average")) or to_float(res.get("price"))
             new_fill = filled - (o.get("filled_qty") or 0)
             if new_fill > 1e-12 and avg:
                 _record_fill(st, o, new_fill, avg,
@@ -566,8 +543,7 @@ def _sync_bybit_orders(account: str) -> None:
             _save(st)
 
 
-# ── Blotter / monitoramento ──────────────────────────────────────────────
-
+# Blotter / monitoramento
 def blotter(account: str = "paper") -> dict:
     if account in _BYBIT_PREFIX:
         try:
@@ -607,15 +583,15 @@ def blotter(account: str = "paper") -> dict:
         try:
             ex = _bybit_client(account)
             for p in ex.fetch_positions():
-                contracts = _f(p.get("contracts"))
+                contracts = to_float(p.get("contracts"))
                 if not contracts:
                     continue
                 exchange_positions.append({
                     "symbol": p.get("symbol"), "side": p.get("side"),
-                    "qty": contracts, "entry": _f(p.get("entryPrice")),
-                    "mark": _f(p.get("markPrice")),
-                    "unrealized": _f(p.get("unrealizedPnl")),
-                    "leverage": _f(p.get("leverage")),
+                    "qty": contracts, "entry": to_float(p.get("entryPrice")),
+                    "mark": to_float(p.get("markPrice")),
+                    "unrealized": to_float(p.get("unrealizedPnl")),
+                    "leverage": to_float(p.get("leverage")),
                 })
         except Exception as e:
             exchange_positions = [{"error": str(e)[:200]}]
@@ -641,8 +617,7 @@ def blotter(account: str = "paper") -> dict:
     }
 
 
-# ── Pós-trade analytics (TCA) ────────────────────────────────────────────
-
+# Pós-trade analytics (TCA)
 def tca(account: str = "paper") -> dict:
     with _lock:
         st = _load()

@@ -247,7 +247,7 @@ def run(df: pd.DataFrame, params: dict) -> dict:
         })
         i = k + 1
 
-    # ── Métricas (contrato das demais estratégias) ───────────────────────
+    # Métricas (contrato das demais estratégias)
     eq = eq_curve
     pnls = [t["pnl_pct"] for t in trades]
     wins = [x for x in pnls if x > 0]

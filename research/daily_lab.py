@@ -106,8 +106,7 @@ def _close(trades, df, TS, side, entry, exit_p, j0, j1, A):
     trades.append((net, TS[j0], TS[j1], side, sd, dias))
 
 
-# ── Sinais posicionais (avaliados no fechamento) ─────────────────────────
-
+# Sinais posicionais (avaliados no fechamento)
 def sig_tsmom(df, n=21, long_only=False):
     C = df["Close"].values
     r = pd.Series(C).pct_change(n).values

@@ -111,8 +111,7 @@ def _safe(v):
     return float(v)
 
 
-# ── indicadores ──────────────────────────────────────────────────────────
-
+# indicadores
 def _atr(H, L, C, n=14):
     tr = pd.concat([H - L, (H - C.shift()).abs(), (L - C.shift()).abs()],
                    axis=1).max(axis=1)
@@ -160,8 +159,7 @@ def _gated_signal(df: pd.DataFrame, p: dict) -> np.ndarray:
     return out
 
 
-# ── sinal ao vivo (contrato da automação) ────────────────────────────────
-
+# sinal ao vivo (contrato da automação)
 def signal(df: pd.DataFrame, params: dict):
     """Candles DIÁRIOS fechados -> posição desejada para a próxima abertura
     (market/open) ou None. Posicional: exit_on_flip."""
@@ -190,8 +188,7 @@ def signal(df: pd.DataFrame, params: dict):
     }
 
 
-# ── backtest ─────────────────────────────────────────────────────────────
-
+# backtest
 def run(df: pd.DataFrame, params: dict) -> dict:
     """Backtest honesto posicional. df: OHLCV DIÁRIO, DatetimeIndex UTC.
     PnL BRUTO (preço x exposição); fees/funding ficam com o módulo de custos."""
