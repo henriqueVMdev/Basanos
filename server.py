@@ -1776,7 +1776,7 @@ def api_backtest_validate():
         from monte_carlo.permutation_test import PermutationTestEquity
         from monte_carlo.report           import generate as gen_report
     except ImportError as e:
-        return jsonify({"error": f"Módulo monte_carlo_project não encontrado: {e}"}), 500
+        return jsonify({"error": f"Módulo monte_carlo não encontrado: {e}"}), 500
 
     body         = request.get_json(force=True) or {}
     trades       = body.get("trades", [])

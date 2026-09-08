@@ -4,8 +4,9 @@ Pode ser impresso no terminal ou salvo em output/report.txt.
 """
 from __future__ import annotations
 
-import os
 import math
+import os
+from pathlib import Path
 
 
 def _ordinal(n: float) -> str:
@@ -16,7 +17,7 @@ def _ordinal(n: float) -> str:
     return f"{n}{suffix}"
 
 
-def _fmt_money(v: float | None, ic: float = 10_000.0) -> str:
+def _fmt_money(v: float | None) -> str:
     if v is None or not math.isfinite(v):
         return "-"
     return f"${v:,.2f}"
@@ -99,7 +100,7 @@ def generate(
         f"TRADES: {n_trades}  |  WIN RATE: {win_rate:.1f}%",
         sep2,
         "── BACKTEST METRICS " + "─" * 31,
-        f"Total Return:        {_fmt_money(final_eq - ic, ic)} ({_fmt_pct(total_ret)})",
+        f"Total Return:        {_fmt_money(final_eq - ic)} ({_fmt_pct(total_ret)})",
         f"Sharpe Ratio:        {float(sharpe):.4f}",
         f"Max Drawdown:        {_fmt_pct(max_dd)}",
         f"Profit Factor:       {float(pf):.2f}" if pf is not None and math.isfinite(float(pf)) else "Profit Factor:       ∞",
@@ -170,8 +171,9 @@ def generate(
     return report_text
 
 
-def save(text: str, path: str = "monte_carlo_project/output/report.txt") -> None:
+def save(text: str, path: str | None = None) -> None:
     """Salva o relatório em arquivo e imprime no terminal."""
+    path = path or str(Path(__file__).parents[1] / "output" / "report.txt")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)

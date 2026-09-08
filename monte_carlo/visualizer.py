@@ -5,6 +5,8 @@ Salva PNGs em output/.
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend
@@ -21,7 +23,7 @@ BG     = "#0d0d12"
 PANEL  = "#12121a"
 GRID   = (1, 1, 1, 0.06)
 
-OUTPUT = "monte_carlo_project/output"
+OUTPUT = str(Path(__file__).parents[1] / "output")
 
 
 def _dark_fig(figsize=(12, 7)):

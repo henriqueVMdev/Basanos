@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 CORRECAO DE LOOKAHEAD: o slope da EMA9 1h era calculado com
 resample('1h').last() + reindex(ffill) â€” o bucket 10:00 contem o close

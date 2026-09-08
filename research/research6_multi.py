@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Estrategia MM9 pullback maker, janela 19-00h BRT, em 13 perps Bybit.
 Slope 1h SEM lookahead. Exporta trades stress (ano todo) por simbolo e

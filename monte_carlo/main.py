@@ -2,8 +2,8 @@
 Entry point — Monte Carlo Strategy Validation (CLI).
 
 Uso:
-    python -m monte_carlo_project.main
-    python -m monte_carlo_project.main --ticker ETH-USD --fast 10 --slow 30 --sims 2000
+    python -m monte_carlo.main
+    python -m monte_carlo.main --ticker ETH-USD --fast 10 --slow 30 --sims 2000
 """
 from __future__ import annotations
 

@@ -15,24 +15,15 @@ import numpy as np
 # Helpers internos
 def _equity_from_trades(pnls: np.ndarray, initial_capital: float) -> np.ndarray:
     """Constrói equity curve a partir de lista de PnL% por trade."""
-    equity = np.empty(len(pnls) + 1)
-    equity[0] = initial_capital
-    for i, p in enumerate(pnls):
-        equity[i + 1] = equity[i] * (1.0 + p / 100.0)
-    return equity
+    growth = np.cumprod(1.0 + np.asarray(pnls, dtype=float) / 100.0)
+    return initial_capital * np.concatenate(([1.0], growth))
 
 
 def _max_drawdown_pct(equity: np.ndarray) -> float:
-    """Retorna max drawdown em % (valor negativo). O(n)."""
-    peak = equity[0]
-    max_dd = 0.0
-    for v in equity:
-        if v > peak:
-            peak = v
-        dd = (v - peak) / peak * 100.0
-        if dd < max_dd:
-            max_dd = dd
-    return float(max_dd)
+    """Max drawdown em % (valor negativo)."""
+    eq = np.asarray(equity, dtype=float)
+    peak = np.maximum.accumulate(eq)
+    return float(min(0.0, ((eq - peak) / peak * 100.0).min()))
 
 
 def _sharpe_from_pnls(pnls: np.ndarray) -> float:
@@ -105,8 +96,8 @@ def _build_result(
     ruin_prob = float(np.mean(finals_abs < initial_capital * 0.5) * 100.0)
 
     # Ranks percentis do backtest original vs distribuição simulada
-    # Usa método "mean": (n_abaixo + 0.5 * n_igual) / n
-    # Evita o artefato de rank=100% quando todos os valores são idênticos (ex.: reshuffle)
+    # Método "mean": (n_abaixo + 0.5 * n_igual) / n, para não reportar 100%
+    # quando os valores são todos iguais (reshuffle não muda o equity final).
     orig_final_pct = float((original_equity[-1] / initial_capital - 1.0) * 100.0)
     orig_dd = float(_max_drawdown_pct(original_equity))
 
@@ -114,8 +105,12 @@ def _build_result(
         n = len(dist)
         if n == 0:
             return 0.0
-        n_below = float(np.sum(dist < value))
-        n_equal = float(np.sum(dist == value))
+        # Tolerância: permutar os mesmos trades dá o mesmo equity a menos dos
+        # últimos bits (multiplicação não é associativa). Sem isso, o rank do
+        # reshuffle vira ruído de arredondamento em vez de 50%.
+        tol = 1e-9 * max(1.0, abs(value))
+        n_below = float(np.sum(dist < value - tol))
+        n_equal = float(np.sum(np.abs(dist - value) <= tol))
         return (n_below + 0.5 * n_equal) / n * 100.0
 
     rank_equity = _rank_mean(finals_pct, orig_final_pct)

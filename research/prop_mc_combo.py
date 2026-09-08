@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Fronteira aprovacao x velocidade do prop challenge (alvo +5%, total -10%,
 diaria -5% = reprova) sobre os trades STRESS na janela 19-00h BRT.

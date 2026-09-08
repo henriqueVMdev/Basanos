@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Cestas maiores x risco menor: diversificacao vs regra diaria."""
 import numpy as np
 import pandas as pd
