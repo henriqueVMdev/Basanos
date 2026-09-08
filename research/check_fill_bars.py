@@ -2,7 +2,7 @@
 """Confere a forma do candle do fill nos 3 trades que divergem TV x local."""
 import sys
 sys.path.insert(0, '.')
-from market_data import fetch_ohlcv
+from providers.market_data import fetch_ohlcv
 
 df = fetch_ohlcv('BTC', '15m', 'bybit', limit=1000, total=15000)
 cases = [('2026-05-11 00:00', 1, 81895.1),

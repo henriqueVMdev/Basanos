@@ -12,11 +12,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
 COPY *.py ./
+COPY api ./api
+COPY providers ./providers
+COPY engine ./engine
 COPY strategies ./strategies
 COPY charts ./charts
-COPY pages ./pages
 COPY automation ./automation
 COPY monte_carlo ./monte_carlo
+COPY costs ./costs
 
 EXPOSE 5000
 

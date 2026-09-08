@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import pandas as pd
 
-from market_data import fetch_ohlcv
+from providers.market_data import fetch_ohlcv
 import strategies.mm9_pullback as mm9
 
 # ── parâmetros (defaults da estratégia / do .pine) ───────────────────────

@@ -11,8 +11,8 @@ st.title("Backtesting Live")
 # Importar engine do backtesting
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from backtesting import Config, run_backtest, download_data, load_csv as bt_load_csv
+sys.path.insert(0, str(Path(__file__).parents[2]))
+from engine.backtesting import Config, run_backtest, download_data, load_csv as bt_load_csv
 
 # Lista de ativos pre-definidos
 ASSETS = {

@@ -207,7 +207,7 @@ def supply_chain() -> dict:
         gs = gscpi_series()
         last = gs["values"][-1]
         yoy = last - gs["values"][-13] if len(gs["values"]) > 13 else None
-        import tradfi_data
+        from providers import tradfi_data
         q = tradfi_data.quotes([t for t, _ in _FREIGHT_PROXIES])
         rows = [{"symbol": t, "label": lbl,
                  "last": (q.get(t) or {}).get("last"),
@@ -289,7 +289,7 @@ def climate() -> dict:
         }[status]
         weather = None
         try:
-            import commodities_data
+            from providers import commodities_data
             weather = commodities_data.weather()
         except Exception:
             pass
@@ -400,7 +400,7 @@ _MAJORS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "LINK",
 def crypto_micro() -> dict:
     def fetch():
         from concurrent.futures import ThreadPoolExecutor
-        from market_data import get_exchange
+        from providers.market_data import get_exchange
         ex = get_exchange("bybit")
         frs = ex.fetch_funding_rates()
         rows = [(s.split("/")[0], _f(v.get("fundingRate")))

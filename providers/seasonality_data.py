@@ -31,7 +31,7 @@ def _analyze(sym):
     import pandas as pd
     import yfinance as yf
     try:
-        import tradfi_data
+        from providers import tradfi_data
         yf_sym = tradfi_data.resolve(sym)
     except Exception: yf_sym = sym
     ticker = yf.Ticker(yf_sym)

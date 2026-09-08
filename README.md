@@ -148,26 +148,50 @@ Estratégias em `strategies/` expõem `signal(df, params)` (contrato validado em
 
 ```
 server.py               ponto de entrada Flask (porta 5000)
-terminal_api.py         endpoints do terminal (/api/terminal/...)
-intelligence_data.py    motor de cruzamento, ranking, tracking forward
-btc_onchain_metrics.py  métricas on-chain BTC (bitcoin-data/Glassnode, Pi Cycle, OI)
-onchain_data.py         overview on-chain e perfil por moeda
-altdata.py              GSCPI, TSA, clima/ENSO, setores, cripto micro
-commodities_data.py     curvas de futuros, clima nas regiões, shipping, EIA
-seasonality_data.py     análise sazonal por ativo
-insider_data.py         SEC EDGAR, CFTC COT, top traders Binance
-liquidity_data.py       séries FRED
-markets_data.py         opções, book, dados de mercado tradfi
-options_analytics.py    greeks, superfície de vol, simulador de estratégias
-technical_data.py       indicadores técnicos e gráficos
-oms.py                  OMS paper (pre-trade, blotter, TCA)
-backtesting.py          motor de backtest
-optimizer.py            otimização e walk-forward
+config.py / loader.py   configuração e leitura de CSVs de otimização
+
+api/                    Blueprints Flask
+  terminal_api.py         endpoints do terminal (/api/terminal/...)
+  agents_api.py           agentes (CRUD, execução SSE, skills)
+  hft_engine.py           motor HFT experimental
+
+providers/              coleta e normalização de dados externos
+  market_data.py          OHLCV e exchanges (CCXT)
+  intelligence_data.py    motor de cruzamento, ranking, tracking forward
+  btc_onchain_metrics.py  métricas on-chain BTC (bitcoin-data/Glassnode, Pi Cycle, OI)
+  onchain_data.py         overview on-chain e perfil por moeda
+  altdata.py              GSCPI, TSA, clima/ENSO, setores, cripto micro
+  commodities_data.py     curvas de futuros, clima nas regiões, shipping, EIA
+  seasonality_data.py     análise sazonal por ativo
+  insider_data.py         SEC EDGAR, CFTC COT, top traders Binance
+  liquidity_data.py       séries FRED
+  markets_data.py         opções, book, dados de mercado tradfi
+  technical_data.py       indicadores técnicos e gráficos
+  tradfi_data.py          ações, índices, FX, renda fixa
+  eqs_data.py             dados de equities
+  calendar_data.py        calendário econômico
+  exchange_sync.py        sincronização de trades/taxas reais (CCXT)
+  x_scraper.py            coleta no X/Twitter
+
+engine/                 cálculo e estado de trading
+  backtesting.py          motor de backtest
+  optimizer.py            otimização e walk-forward
+  oms.py                  OMS paper (pre-trade, blotter, TCA)
+  regime_detection.py     detecção de regimes de mercado
+  portfolio_lab.py        métricas de portfólio
+  equity_analysis.py      análise de equities
+  options_analytics.py    greeks, superfície de vol, simulador de estratégias
+
 automation/             runner, engine paper, executor Bybit, SQLite
 strategies/             estratégias automatizáveis (signal()) e Pine Scripts
+costs/                  fees, funding, métricas e cenários
+monte_carlo/            simulações e permutation tests
+charts/                 gráficos Plotly compartilhados
 research/               scripts de pesquisa com validação causal
+streamlit_app/          dashboard Streamlit legado (app.py + pages/)
 frontend/               Vue 3 + Vite + Tailwind (porta 5173)
-data/                   caches e bancos locais (sinais, on-chain)
+data/                   caches, bancos e estado local (sinais, on-chain, journal, alertas)
+docs/                   documentação de arquitetura, API e operação
 tests/                  testes de regressão
 ```
 

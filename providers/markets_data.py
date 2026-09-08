@@ -160,7 +160,7 @@ def _chain_rows(df):
 
 
 def option_chain(symbol: str, expiry: str | None = None) -> dict:
-    import tradfi_data
+    from providers import tradfi_data
     yf_sym = tradfi_data.resolve(symbol)
 
     def fetch():
@@ -207,7 +207,7 @@ def option_chain(symbol: str, expiry: str | None = None) -> dict:
 def order_book(symbol: str, exchange: str = "bybit", market: str = "crypto") -> dict:
     if market == "tradfi":
         # ações/ETFs: só top-of-book (bid/ask) está disponível de graça
-        import tradfi_data
+        from providers import tradfi_data
         yf_sym = tradfi_data.resolve(symbol)
 
         def fetch():
@@ -225,7 +225,7 @@ def order_book(symbol: str, exchange: str = "bybit", market: str = "crypto") -> 
 
         return _cached(("tob", yf_sym), 15, fetch)
 
-    from market_data import get_exchange, normalize_symbol
+    from providers.market_data import get_exchange, normalize_symbol
     ex = get_exchange(exchange)
     sym = normalize_symbol(symbol, exchange)
     ob = ex.fetch_order_book(sym, limit=15)

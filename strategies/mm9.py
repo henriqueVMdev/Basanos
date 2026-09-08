@@ -43,7 +43,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from backtesting import calc_ma, Trade, brt_hour
+from engine.backtesting import calc_ma, Trade, brt_hour
 
 NAME = "MM9 / TrapM — Engolfo + 2 Alvos"
 DESCRIPTION = (

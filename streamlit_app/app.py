@@ -1,6 +1,10 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parents[1]))
+
 import streamlit as st
 import pandas as pd
-from pathlib import Path
 
 from config import DATA_DIR, TOP_N
 from loader import load_csv

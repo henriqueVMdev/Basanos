@@ -38,7 +38,7 @@ _regime_cache = None
 
 
 def _fetch_regime(regime_ma: int) -> pd.DataFrame:
-    import market_data
+    from providers import market_data
     return market_data.fetch_ohlcv("BTC", "1d", exchange="binance",
                                    total=regime_ma + 250)
 

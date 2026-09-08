@@ -65,8 +65,8 @@ docker compose up --build
 O Compose atual é adequado para avaliação local, não para exposição pública. Corrigir antes de produção:
 
 1. O container executa `app.run(debug=True)`, servidor de desenvolvimento Flask e debugger potencialmente inseguro. Usar Gunicorn/uWSGI com `FLASK_DEBUG=0`.
-2. O Dockerfile do backend não copia `costs/`, embora endpoints importem esse pacote.
-3. `automation/state.db`, `journal_data.json`, `alerts_data.json` e `costs/_cache` não estão no volume `data`; podem ser perdidos em recriação do container.
+2. `automation/state.db` e `costs/_cache` não estão no volume `data`; podem ser perdidos em recriação do container.
+3. Estado JSON (`journal`, `alertas`, `OMS`, HFT, agentes) vive em `data/`, que é volume no Compose.
 4. Não há autenticação/RBAC. Não expor APIs de ordens, automação, agentes ou mutação à internet.
 5. A porta 5000 é publicada; em produção deve ficar apenas na rede interna.
 6. Não existem health/readiness probes, limites de CPU/memória ou política de backup.
@@ -103,7 +103,7 @@ Inventariar e copiar de forma consistente:
 - `automation/state.db` com arquivos WAL/SHM ou via backup SQLite online.
 - `data/intelligence_signals.db`.
 - `data/agents.json`, `data/hft_state.json`.
-- `journal_data.json`, `alerts_data.json`.
+- `data/journal_data.json`, `data/alerts_data.json`, `data/oms_data.json`.
 - Configurações/estratégias versionadas no Git.
 
 RPO/RTO devem ser definidos pelo uso real. Para dinheiro real, validar restore antes da ativação e reconciliar exchange como fonte de verdade após qualquer incidente.

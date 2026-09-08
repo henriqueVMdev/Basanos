@@ -120,7 +120,7 @@ def _coin(sym: str) -> dict:
                     timeout=20)
 
     def fetch_deriv():
-        from market_data import get_exchange
+        from providers.market_data import get_exchange
         ex = get_exchange("bybit")
         pair = f"{sym}/USDT:USDT"
         fr = ex.fetch_funding_rate(pair)

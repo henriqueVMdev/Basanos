@@ -3,7 +3,7 @@ Regime Detection via HMM (Baum-Welch), Markov Switching (statsmodels)
 ou Change-Point Detection (Binary Segmentation).
 
 Uso:
-    from regime_detection import detect_regimes
+    from engine.regime_detection import detect_regimes
     result = detect_regimes(df_ohlcv, method="hmm", n_states=0, features=["log_return", "volatility"])
 """
 

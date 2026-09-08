@@ -50,7 +50,7 @@ GROUPS = [
 
 def overview() -> dict:
     def fetch():
-        import tradfi_data
+        from providers import tradfi_data
         all_syms = [s for _, items in GROUPS for s, _ in items]
         q = tradfi_data.quotes(all_syms)
         out = []
@@ -250,7 +250,7 @@ SHIPPING = [
 
 def shipping() -> dict:
     def fetch():
-        import tradfi_data
+        from providers import tradfi_data
         q = tradfi_data.quotes([s for s, *_ in SHIPPING])
         rows = []
         for sym, label, seg in SHIPPING:

@@ -35,7 +35,7 @@ def signal(df, params: dict):
     if df is None or len(df) < 5:
         return None
     try:
-        import intelligence_data
+        from providers import intelligence_data
         r = intelligence_data.analyze(sym)
         sig = r["signal"]
         side = 1 if sig["label"] == "COMPRA" else -1 if sig["label"] == "VENDA" else 0

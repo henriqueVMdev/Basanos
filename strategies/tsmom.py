@@ -137,7 +137,7 @@ def _btc_bull(index: pd.DatetimeIndex, regime_ma: int) -> np.ndarray:
     """Série booleana BTC>SMA200 alinhada ao índice do símbolo (ffill).
     Busca BTC 1d via market_data; sem rede/dado, cai para NaN (sinal 0)."""
     try:
-        import market_data
+        from providers import market_data
         btc = market_data.fetch_ohlcv("BTC", "1d", exchange="binance",
                                       total=len(index) + regime_ma + 50)
         c = btc["Close"]

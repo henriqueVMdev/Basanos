@@ -100,7 +100,7 @@ BTC/ETH/SOL/DOGE):
 ### DePaula no diário (`depaula_opt.py`, 2026-07-09) — REPROVADA
 
 Núcleo do sinal (ângulo de MA + histerese, matemática validada idêntica
-ao `backtesting.py`) rodado no motor honesto (`run_daily`), grid de 576
+ao `engine/backtesting.py`) rodado no motor honesto (`run_daily`), grid de 576
 combos 100% no treino <2024. O motor original **não serve** para
 aferir edge: executa no close da mesma barra do sinal, sem custos, e
 checa TP/SL contra bandas da MA da própria barra (lookahead); além do

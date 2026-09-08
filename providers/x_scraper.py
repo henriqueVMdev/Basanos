@@ -14,7 +14,7 @@ import re
 import sys
 from pathlib import Path
 
-SESSION_FILE = Path(__file__).parent / ".x_session.json"
+SESSION_FILE = Path(__file__).parents[1] / "data" / ".x_session.json"
 SEARCH_URL = "https://x.com/search?q={query}&src=typed_query&f=live"
 
 

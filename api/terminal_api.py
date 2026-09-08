@@ -19,7 +19,7 @@ from urllib.request import Request, urlopen
 
 from flask import Blueprint, jsonify, request
 
-from market_data import get_exchange, normalize_symbol
+from providers.market_data import get_exchange, normalize_symbol
 
 terminal_bp = Blueprint("terminal", __name__, url_prefix="/api/terminal")
 
@@ -80,7 +80,7 @@ def watch():
                     "next_funding_ts": fr.get("fundingTimestamp") or fr.get("nextFundingTimestamp"),
                 })
         if tradfi:
-            import tradfi_data
+            from providers import tradfi_data
             tq = tradfi_data.quotes(tradfi)
             rows.extend(tq[s] for s in tradfi if tq.get(s))
         return jsonify({"rows": rows, "ts": int(time.time() * 1000)})
@@ -100,7 +100,7 @@ def spark():
         if not base:
             return jsonify({"error": "symbol obrigatório"}), 400
         if (request.args.get("market") or "").lower() == "tradfi":
-            import tradfi_data
+            from providers import tradfi_data
             return jsonify({"closes": tradfi_data.closes(base, tf, bars)})
         sym = normalize_symbol(base, exchange)
 
@@ -142,7 +142,7 @@ def screener():
     try:
         market = (request.args.get("market") or "crypto").lower()
         if market != "crypto":
-            import tradfi_data
+            from providers import tradfi_data
             rows = tradfi_data.screener_rows(market)
             return jsonify({"rows": rows, "ts": int(time.time() * 1000)})
         exchange = (request.args.get("exchange") or "bybit").lower()
@@ -192,7 +192,7 @@ def des():
             return jsonify({"error": "symbol obrigatório"}), 400
 
         if market == "tradfi":
-            import tradfi_data
+            from providers import tradfi_data
             return jsonify(tradfi_data.describe(base))
 
         try:
@@ -202,7 +202,7 @@ def des():
         except Exception:
             # modo auto: símbolo não existe na exchange -> tenta tradicional
             if market == "auto":
-                import tradfi_data
+                from providers import tradfi_data
                 return jsonify(tradfi_data.describe(base))
             raise
         ticker = ex.fetch_ticker(sym)
@@ -272,7 +272,7 @@ def des():
 @terminal_bp.get("/rates")
 def rates():
     try:
-        import markets_data
+        from providers import markets_data
         out = markets_data.yield_curve()
         out = {**out, "credit": markets_data.credit_spreads()}
         return jsonify(out)
@@ -283,8 +283,8 @@ def rates():
 @terminal_bp.get("/options")
 def options():
     try:
-        import markets_data
-        import options_analytics
+        from providers import markets_data
+        from engine import options_analytics
         base = (request.args.get("symbol") or "").strip()
         if not base:
             return jsonify({"error": "symbol obrigatório"}), 400
@@ -298,7 +298,7 @@ def options():
 @terminal_bp.get("/options/surface")
 def options_surface():
     try:
-        import options_analytics
+        from engine import options_analytics
         base = (request.args.get("symbol") or "").strip()
         if not base:
             return jsonify({"error": "symbol obrigatório"}), 400
@@ -310,7 +310,7 @@ def options_surface():
 @terminal_bp.post("/options/strategy")
 def options_strategy():
     try:
-        import options_analytics
+        from engine import options_analytics
         payload = request.get_json(force=True) or {}
         return jsonify(options_analytics.strategy_eval(payload))
     except ValueError as e:
@@ -324,7 +324,7 @@ def options_strategy():
 @terminal_bp.post("/chart")
 def chart():
     try:
-        import technical_data
+        from providers import technical_data
         body = request.get_json(force=True) or {}
         symbols = body.get("symbols") or []
         if not symbols:
@@ -345,7 +345,7 @@ def chart():
 @terminal_bp.get("/alt/indicators")
 def alt_indicators():
     try:
-        import altdata
+        from providers import altdata
         return jsonify(altdata.indicators())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -354,7 +354,7 @@ def alt_indicators():
 @terminal_bp.get("/alt/supplychain")
 def alt_supplychain():
     try:
-        import altdata
+        from providers import altdata
         return jsonify(altdata.supply_chain())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -363,7 +363,7 @@ def alt_supplychain():
 @terminal_bp.get("/alt/traffic")
 def alt_traffic():
     try:
-        import altdata
+        from providers import altdata
         return jsonify(altdata.traffic())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -372,7 +372,7 @@ def alt_traffic():
 @terminal_bp.get("/alt/climate")
 def alt_climate():
     try:
-        import altdata
+        from providers import altdata
         return jsonify(altdata.climate())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -381,7 +381,7 @@ def alt_climate():
 @terminal_bp.get("/alt/sectors")
 def alt_sectors():
     try:
-        import altdata
+        from providers import altdata
         return jsonify(altdata.sector_metrics(request.args.get("s", "varejo")))
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
@@ -392,7 +392,7 @@ def alt_sectors():
 @terminal_bp.get("/alt/cryptomicro")
 def alt_cryptomicro():
     try:
-        import altdata
+        from providers import altdata
         return jsonify(altdata.crypto_micro())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -401,7 +401,7 @@ def alt_cryptomicro():
 @terminal_bp.get("/alt/onchain")
 def alt_onchain():
     try:
-        import onchain_data
+        from providers import onchain_data
         return jsonify(onchain_data.overview())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -410,7 +410,7 @@ def alt_onchain():
 @terminal_bp.get("/alt/onchain/coin")
 def alt_onchain_coin():
     try:
-        import onchain_data
+        from providers import onchain_data
         return jsonify(onchain_data.coin(request.args.get("symbol", "")))
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
@@ -423,7 +423,7 @@ def alt_onchain_coin():
 @terminal_bp.get("/oms/accounts")
 def oms_accounts():
     try:
-        import oms
+        from engine import oms
         return jsonify(oms.accounts())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -432,7 +432,7 @@ def oms_accounts():
 @terminal_bp.post("/oms/pretrade")
 def oms_pretrade():
     try:
-        import oms
+        from engine import oms
         return jsonify(oms.pre_trade(request.get_json(force=True) or {}))
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
@@ -443,7 +443,7 @@ def oms_pretrade():
 @terminal_bp.post("/oms/orders")
 def oms_submit():
     try:
-        import oms
+        from engine import oms
         return jsonify(oms.submit_order(request.get_json(force=True) or {}))
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
@@ -454,7 +454,7 @@ def oms_submit():
 @terminal_bp.delete("/oms/orders/<order_id>")
 def oms_cancel(order_id):
     try:
-        import oms
+        from engine import oms
         return jsonify(oms.cancel_order(order_id))
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
@@ -465,7 +465,7 @@ def oms_cancel(order_id):
 @terminal_bp.get("/oms/blotter")
 def oms_blotter():
     try:
-        import oms
+        from engine import oms
         return jsonify(oms.blotter(request.args.get("account", "paper")))
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -474,7 +474,7 @@ def oms_blotter():
 @terminal_bp.get("/oms/tca")
 def oms_tca():
     try:
-        import oms
+        from engine import oms
         return jsonify(oms.tca(request.args.get("account", "paper")))
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -486,7 +486,7 @@ def oms_reset():
         body = request.get_json(force=True) or {}
         if not body.get("confirm"):
             return jsonify({"error": "reset da conta paper exige confirm=true"}), 400
-        import oms
+        from engine import oms
         return jsonify(oms.reset_paper())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -497,7 +497,7 @@ def oms_reset():
 @terminal_bp.get("/cdty/overview")
 def cdty_overview():
     try:
-        import commodities_data
+        from providers import commodities_data
         return jsonify(commodities_data.overview())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -506,7 +506,7 @@ def cdty_overview():
 @terminal_bp.get("/cdty/curves")
 def cdty_curves():
     try:
-        import commodities_data
+        from providers import commodities_data
         return jsonify({"curves": commodities_data.curves_meta()})
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -515,7 +515,7 @@ def cdty_curves():
 @terminal_bp.get("/cdty/curve")
 def cdty_curve():
     try:
-        import commodities_data
+        from providers import commodities_data
         root = (request.args.get("c") or "CL").strip()
         return jsonify(commodities_data.futures_curve(root))
     except ValueError as e:
@@ -527,7 +527,7 @@ def cdty_curve():
 @terminal_bp.get("/cdty/weather")
 def cdty_weather():
     try:
-        import commodities_data
+        from providers import commodities_data
         return jsonify(commodities_data.weather())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -536,7 +536,7 @@ def cdty_weather():
 @terminal_bp.get("/cdty/shipping")
 def cdty_shipping():
     try:
-        import commodities_data
+        from providers import commodities_data
         return jsonify(commodities_data.shipping())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -545,7 +545,7 @@ def cdty_shipping():
 @terminal_bp.get("/cdty/inventories")
 def cdty_inventories():
     try:
-        import commodities_data
+        from providers import commodities_data
         return jsonify(commodities_data.inventories())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -554,7 +554,7 @@ def cdty_inventories():
 @terminal_bp.get("/book")
 def book():
     try:
-        import markets_data
+        from providers import markets_data
         base = (request.args.get("symbol") or "").strip()
         if not base:
             return jsonify({"error": "symbol obrigatório"}), 400
@@ -572,7 +572,7 @@ def book():
 @terminal_bp.get("/ea")
 def ea():
     try:
-        import equity_analysis
+        from engine import equity_analysis
         base = (request.args.get("symbol") or "").strip()
         if not base:
             return jsonify({"error": "symbol obrigatório"}), 400
@@ -586,7 +586,7 @@ def ea():
 @terminal_bp.get("/eqs/meta")
 def eqs_meta():
     try:
-        import eqs_data
+        from providers import eqs_data
         return jsonify(eqs_data.meta())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
@@ -595,7 +595,7 @@ def eqs_meta():
 @terminal_bp.post("/eqs/equity")
 def eqs_equity():
     try:
-        import eqs_data
+        from providers import eqs_data
         filters = request.get_json(force=True) or {}
         return jsonify(eqs_data.run_equity_screen(filters))
     except Exception as e:
@@ -605,7 +605,7 @@ def eqs_equity():
 @terminal_bp.get("/eqs/funds")
 def eqs_funds():
     try:
-        import eqs_data
+        from providers import eqs_data
         screen = request.args.get("screen") or "top_etfs_us"
         return jsonify(eqs_data.run_fund_screen(screen))
     except ValueError as e:
@@ -616,7 +616,7 @@ def eqs_funds():
 
 # ── Alertas (preço/funding) ──────────────────────────────────────────────
 
-_ALERTS_FILE = Path(__file__).parent / "alerts_data.json"
+_ALERTS_FILE = Path(__file__).parents[1] / "data" / "alerts_data.json"
 _alerts_lock = threading.Lock()
 _ALERT_KINDS = ("price_above", "price_below", "funding_above", "funding_below",
                 "signal_score_above", "signal_score_below")
@@ -725,7 +725,7 @@ def _alert_watcher():
             quotes: dict = {}
             if tradfi_syms:
                 try:
-                    import tradfi_data
+                    from providers import tradfi_data
                     tq = tradfi_data.quotes(list(tradfi_syms))
                     for s, row in tq.items():
                         quotes[("tradfi", s)] = {"price": row.get("last"),
@@ -775,7 +775,7 @@ def _signal_alert_watcher():
     while True:
         time.sleep(60)
         try:
-            import intelligence_data
+            from providers import intelligence_data
             # mantém o ranking quente (rebuild a cada 15 min) e vira "vigia":
             # transições de sinal e divergências novas viram alertas disparados
             intelligence_data.ranking()
@@ -915,7 +915,7 @@ def news():
 @terminal_bp.get("/seasonality")
 def seasonality():
     try:
-        import seasonality_data
+        from providers import seasonality_data
         return jsonify(seasonality_data.analyze(request.args.get("symbol", "")))
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 400
@@ -923,7 +923,7 @@ def seasonality():
 @terminal_bp.get("/intelligence")
 def intelligence():
     try:
-        import intelligence_data
+        from providers import intelligence_data
         return jsonify(intelligence_data.analyze(request.args.get("symbol", "BTC")))
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 400
@@ -931,7 +931,7 @@ def intelligence():
 @terminal_bp.get("/intelligence/ranking")
 def intelligence_ranking():
     try:
-        import intelligence_data
+        from providers import intelligence_data
         return jsonify(intelligence_data.ranking())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 400
@@ -939,7 +939,7 @@ def intelligence_ranking():
 @terminal_bp.get("/intelligence/tracking")
 def intelligence_tracking():
     try:
-        import intelligence_data
+        from providers import intelligence_data
         return jsonify(intelligence_data.tracking())
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 400
@@ -947,7 +947,7 @@ def intelligence_tracking():
 @terminal_bp.get("/calendar")
 def market_calendar():
     try:
-        import calendar_data
+        from providers import calendar_data
         symbols=[x for x in request.args.get("symbols","").upper().split(",") if x]
         return jsonify(calendar_data.events(symbols))
     except Exception as e:return jsonify({"error":str(e)[:300]}),400
@@ -955,14 +955,14 @@ def market_calendar():
 @terminal_bp.get("/liquidity")
 def liquidity():
     try:
-        import liquidity_data
+        from providers import liquidity_data
         return jsonify(liquidity_data.snapshot())
     except Exception as e:return jsonify({"error":str(e)[:300]}),400
 
 @terminal_bp.post("/portfolio-lab")
 def portfolio_lab_route():
     try:
-        import portfolio_lab
+        from engine import portfolio_lab
         body=request.get_json(force=True) or {}
         return jsonify(portfolio_lab.analyze(body.get("symbols") or [],body.get("years",3)))
     except Exception as e:return jsonify({"error":str(e)[:300]}),400

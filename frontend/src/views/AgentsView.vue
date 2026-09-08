@@ -44,7 +44,7 @@
         <input v-model="form.model" placeholder="Modelo (ex: anthropic/claude-sonnet-5)" class="inp font-mono text-[11px]" />
         <div class="flex gap-2">
           <select v-model="form.agent_type" class="inp flex-1">
-            <option value="native">native (loop Graph)</option>
+            <option value="native">native (loop Basanos)</option>
             <option value="hermes">hermes (gateway)</option>
             <option value="openclaw">openclaw (gateway)</option>
           </select>
@@ -129,7 +129,7 @@
         <div>
           <p class="text-gray-400 text-sm">Selecione ou crie um agente</p>
           <p class="text-gray-500 text-xs mt-2 max-w-md">
-            Agentes nativos rodam o loop de tools do Graph (memecoins, hype radar, busca social).<br/>
+            Agentes nativos rodam o loop de tools do Basanos (memecoins, hype radar, busca social).<br/>
             Tipos hermes/openclaw delegam ao gateway configurado no .env.
           </p>
         </div>

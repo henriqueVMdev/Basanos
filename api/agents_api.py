@@ -25,11 +25,11 @@ import requests
 from flask import Blueprint, Response, jsonify, request
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent / ".env")
+load_dotenv(Path(__file__).parents[1] / ".env")
 
 agents_bp = Blueprint("agents", __name__)
 
-AGENTS_FILE = Path(__file__).parent / "data" / "agents.json"
+AGENTS_FILE = Path(__file__).parents[1] / "data" / "agents.json"
 _lock = threading.Lock()
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1"

@@ -126,7 +126,7 @@ def mark_to_market(pos: dict | None, equity: float, close: float) -> float:
 def close_position_now(dep: dict, pos: dict) -> None:
     """Fecha a posição paper no close do último candle FECHADO (taker).
     Usado pelo stop manual (api) e pelos guardrails do runner."""
-    from market_data import fetch_ohlcv
+    from providers.market_data import fetch_ohlcv
     import pandas as pd
     from . import store
 

@@ -102,8 +102,8 @@ export function getOptimizerGrids(strategyFile = 'depaula') {
   return api.get('/optimizer/grids', { params: { strategy: strategyFile } })
 }
 
-export function getOptimizerCount(grid, capital, strategyFile = 'depaula') {
-  return api.post('/optimizer/count', { grid, capital, strategy_file: strategyFile })
+export function getOptimizerCount(grid, capital, strategyFile = 'depaula', config = {}) {
+  return api.post('/optimizer/count', { grid, capital, strategy_file: strategyFile, config })
 }
 
 export function stopOptimizer() {

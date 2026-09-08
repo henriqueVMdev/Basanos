@@ -127,7 +127,7 @@ def _peers(yf_sym: str, sector: str | None, mcap) -> list:
 
 
 def analyze(symbol: str) -> dict:
-    import tradfi_data
+    from providers import tradfi_data
     yf_sym = tradfi_data.resolve(symbol)
 
     def fetch():

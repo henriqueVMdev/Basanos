@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from btc_onchain_metrics import payload  # noqa: E402
+from providers.btc_onchain_metrics import payload  # noqa: E402
 
 
 LABELS = {1: "COMPRA", 0: "NEUTRO", -1: "VENDA"}
@@ -97,7 +97,7 @@ def score_history(df: pd.DataFrame, buy_threshold=1.5, sell_threshold=-1.5) -> p
     # Peso subordinado (tilt): técnica segue tendência e on-chain é contrário;
     # com peso igual eles se cancelam exatamente nos topos/fundos que o modelo
     # existe para pegar. RSI é contrário e pode pesar mais.
-    from technical_data import _sma, _rsi
+    from providers.technical_data import _sma, _rsi
     sma200 = _sma(out.price, 200)
     add("Tendência SMA200", out.price > sma200, out.price < sma200, 0.25,
         sma200.notna())

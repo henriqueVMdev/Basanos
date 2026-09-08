@@ -2,12 +2,12 @@ import numpy as np
 import pandas as pd
 from unittest.mock import patch
 
-from insider_data import _CFTC
-from portfolio_lab import _annualization_factor
+from providers.insider_data import _CFTC
+from engine.portfolio_lab import _annualization_factor
 from research.analyze_btc_onchain_signals import summarize
-from seasonality_data import _path
-from calendar_data import events
-import btc_onchain_metrics
+from providers.seasonality_data import _path
+from providers.calendar_data import events
+from providers import btc_onchain_metrics
 
 
 def test_annualization_respects_shared_market_calendar():

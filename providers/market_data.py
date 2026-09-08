@@ -12,7 +12,7 @@ Princípios:
 - Confiar no candle que o endpoint retorna; não recalcular.
 
 Uso:
-    from market_data import fetch_ohlcv, SUPPORTED_EXCHANGES
+    from providers.market_data import fetch_ohlcv, SUPPORTED_EXCHANGES
     df = fetch_ohlcv("BTC", "1h", exchange="bybit", total=2000)
 """
 

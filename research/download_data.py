@@ -9,7 +9,7 @@ import time
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from market_data import fetch_ohlcv          # noqa: E402
+from providers.market_data import fetch_ohlcv          # noqa: E402
 from costs.funding import get_funding_events  # noqa: E402
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")

@@ -23,7 +23,7 @@ import ccxt
 from dotenv import load_dotenv
 
 # Carrega o .env da raiz do projeto (idempotente).
-load_dotenv(Path(__file__).parent / ".env")
+load_dotenv(Path(__file__).parents[1] / ".env")
 
 # Corretoras suportadas via CCXT e as env vars que cada uma exige.
 SUPPORTED = ("bingx", "okx", "hyperliquid")

@@ -34,14 +34,16 @@ frontend/src/
   router/index.js        rotas da SPA
 
 server.py                app Flask e domínios de backtest/optimizer/journal/degen
-terminal_api.py          Blueprint do terminal de mercado
-agents_api.py            Blueprint de agentes
-hft_engine.py            Blueprint e motor HFT experimental
+api/                     Blueprints Flask (terminal, agentes, HFT)
+providers/               coleta de dados externos (mercado, on-chain, alternativos)
+engine/                  backtest, optimizer, OMS, regimes, analytics
 automation/              API, runner, executores, sinais e SQLite
 strategies/              plugins de estratégia e Pine Scripts
 costs/                   fees, funding, métricas e cenários
 monte_carlo/             simulações e permutation tests
+charts/                  gráficos Plotly compartilhados
 research/                experimentos e validações offline
+streamlit_app/           dashboard Streamlit legado
 data/                    caches/estado local
 tests/                   regressões transversais
 ```
@@ -67,10 +69,10 @@ O Axios usa `baseURL=/api`; no desenvolvimento o Vite encaminha para `localhost:
 ### Módulos HTTP
 
 - `server.py`: dashboard, backtest, custos, WFA, Monte Carlo, optimizer, prop challenge, regimes, journal e degen.
-- `terminal_api.py`: monitor, screener, rates, options, dados alternativos, OMS, commodities, notícias, inteligência e portfólio.
+- `api/terminal_api.py`: monitor, screener, rates, options, dados alternativos, OMS, commodities, notícias, inteligência e portfólio.
 - `automation/api.py`: ciclo de vida de deployments e status do runner.
-- `agents_api.py`: CRUD, execução por SSE, skills e propostas.
-- `hft_engine.py`: status, start, stop, configuração e reset.
+- `api/agents_api.py`: CRUD, execução por SSE, skills e propostas.
+- `api/hft_engine.py`: status, start, stop, configuração e reset.
 
 ### Estratégias plugáveis
 
@@ -106,8 +108,9 @@ Para produção escalável, cálculos e runner devem migrar para jobs/worker ded
 | `data/intelligence_signals.db` | `data/` | Tracking forward dos sinais |
 | `data/agents.json` | `data/` | Configuração dos agentes |
 | `data/hft_state.json` | `data/` | Estado do motor HFT |
-| `journal_data.json` | raiz | Diário de trades |
-| `alerts_data.json` | raiz | Alertas |
+| `data/journal_data.json` | `data/` | Diário de trades |
+| `data/alerts_data.json` | `data/` | Alertas |
+| `data/oms_data.json` | `data/` | Estado do OMS paper |
 | `costs/_cache/*.parquet` | `costs/_cache/` | Funding por exchange/símbolo |
 | cache OHLCV | memória do processo | Redução de rate limit |
 

@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
 .env
 .venv/
 venv/
@@ -17,7 +18,7 @@ data/btc_onchain_signals.csv
 data/btc_onchain_signals.summary.json
 
 # Trade journal (dados pessoais do usuário)
-journal_data.json
+data/journal_data.json
 
 # IDE
 .vscode/
@@ -32,8 +33,8 @@ CLAUDE-quant-costs.md
 
 # Automação (estado local: deployments, ordens, fills)
 automation/state.db*
-alerts_data.json
+data/alerts_data.json
+data/oms_data.json
+data/.x_session.json
 server_out.log
 server_err.log
-oms_data.json
-.x_session.json

@@ -19,7 +19,7 @@ from typing import Dict, List, Any
 import argparse
 import time
 
-from backtesting import (
+from engine.backtesting import (
     Config, run_backtest, download_data, load_csv,
     prepare_indicators, BacktestState,
 )

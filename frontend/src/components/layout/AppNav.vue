@@ -4,11 +4,14 @@
 
     <!-- Marca -->
     <RouterLink to="/" class="flex items-center gap-2.5 pr-2 group">
-      <div class="w-7 h-7 rounded-md bg-accent-yellow text-black font-extrabold text-sm
-                  flex items-center justify-center shadow-yellow-glow-sm
-                  group-hover:shadow-yellow-glow transition-shadow">G</div>
+      <img
+        src="/basanos-logo.png"
+        alt="Basanos"
+        class="w-8 h-8 object-contain rounded-md shadow-yellow-glow-sm
+               group-hover:shadow-yellow-glow transition-shadow"
+      />
       <div class="leading-none hidden lg:block">
-        <div class="text-[13px] font-bold tracking-wide text-gray-100">GRAPH</div>
+        <div class="text-[13px] font-bold tracking-wide text-gray-100">BASANOS</div>
         <div class="text-[11px] text-gray-500 uppercase tracking-[0.2em]">quant lab</div>
       </div>
     </RouterLink>

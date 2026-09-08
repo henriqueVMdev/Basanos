@@ -50,13 +50,13 @@ def history(symbol: str, market: str, interval: str, bars: int,
 
     def fetch():
         if market == "crypto":
-            from market_data import fetch_ohlcv
+            from providers.market_data import fetch_ohlcv
             tf = interval if interval != "1wk" else "1w"
             tf = tf if tf != "1mo" else "1M"
             df = fetch_ohlcv(symbol, timeframe=tf, exchange=exchange,
                              limit=1000, total=bars if bars > 1000 else None)
             return df.tail(bars)
-        import tradfi_data
+        from providers import tradfi_data
         import yfinance as yf
         yf_int, period = _YF_INTERVALS.get(interval, ("1d", "10y"))
         df = yf.Ticker(tradfi_data.resolve(symbol)).history(

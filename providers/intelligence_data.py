@@ -165,7 +165,7 @@ def tracking(ttl=3600):
 def _tracking():
     import pandas as pd
     import yfinance as yf
-    from onchain_data import _CG_IDS
+    from providers.onchain_data import _CG_IDS
     rows = []
     if os.path.exists(_TRACK_DB):
         with sqlite3.connect(_TRACK_DB) as c:
@@ -190,7 +190,7 @@ def _tracking():
             yf_sym = f"{sym}-USD"
         else:
             try:
-                import tradfi_data
+                from providers import tradfi_data
                 yf_sym = tradfi_data.resolve(sym)
             except Exception:
                 yf_sym = sym
@@ -269,8 +269,8 @@ def _fwd_stats(close, mask, days=21):
 def _full(raw, sym):
     import pandas as pd
     import yfinance as yf
-    from technical_data import _sma, _rsi
-    from onchain_data import _CG_IDS
+    from providers.technical_data import _sma, _rsi
+    from providers.onchain_data import _CG_IDS
 
     crypto = sym in _CG_IDS or "-USD" in (raw or "").upper()
     is_btc = sym == "BTC"
@@ -278,7 +278,7 @@ def _full(raw, sym):
         yf_sym = f"{sym}-USD"
     else:
         try:
-            import tradfi_data
+            from providers import tradfi_data
             yf_sym = tradfi_data.resolve(sym)
         except Exception:
             yf_sym = sym
@@ -301,7 +301,7 @@ def _full(raw, sym):
     # ── BTC: modelo on-chain do research (já cruza on-chain × técnica) ──
     if is_btc:
         try:
-            from btc_onchain_metrics import payload
+            from providers.btc_onchain_metrics import payload
             from research.analyze_btc_onchain_signals import (
                 build_frame, score_history, summarize)
             data = payload()
@@ -398,7 +398,7 @@ def _full(raw, sym):
 
     # ── sazonalidade do mês corrente ─────────────────────────────────────
     try:
-        import seasonality_data
+        from providers import seasonality_data
         sea = seasonality_data.analyze(yf_sym)
         month = pd.Timestamp.now("UTC").month
         m = next(x for x in sea["monthly_stats"] if x["month"] == month)
@@ -426,7 +426,7 @@ def _full(raw, sym):
 
     # ── macro: liquidez Fed + regime de risco (vale para qualquer ativo) ──
     try:
-        import liquidity_data
+        from providers import liquidity_data
         liq = {r["id"]: r for r in liquidity_data.snapshot()["series"]
                if r.get("status") == "ok"}
         if all(k in liq for k in ("fed_balance_sheet", "reverse_repo", "treasury_account")):
@@ -454,7 +454,7 @@ def _full(raw, sym):
     # ── cripto: funding, TVL, Fear & Greed, amplitude, top traders, dev ──
     if crypto:
         try:
-            import onchain_data
+            from providers import onchain_data
             c = onchain_data.coin(sym)
             d = c.get("deriv") or {}
             f = d.get("funding_pct")
@@ -495,7 +495,7 @@ def _full(raw, sym):
             source("CoinGecko/Bybit (cripto)", "error", e)
 
         try:
-            from onchain_data import _get
+            from providers.onchain_data import _get
             fng = _get("https://api.alternative.me/fng/?limit=1")["data"][0]
             v = int(fng["value"])
             vote(1 if v <= 25 else -1 if v >= 75 else 0,
@@ -505,7 +505,7 @@ def _full(raw, sym):
             source("Fear & Greed", "error", e)
 
         try:
-            import altdata
+            from providers import altdata
             cm = altdata.crypto_micro()
             pp = cm.get("pct_positive")
             if pp is not None:
@@ -517,7 +517,7 @@ def _full(raw, sym):
             source("Bybit (amplitude de funding)", "error", e)
 
         try:
-            import insider_data
+            from providers import insider_data
             sm = insider_data.smart_money(sym)
             feed = next((x for x in sm["feeds"] if x.get("kind") == "smart_money_proxy"), None)
             if feed and feed.get("latest"):
@@ -532,7 +532,7 @@ def _full(raw, sym):
     is_us_stock = not crypto and "." not in sym and "=" not in sym and "^" not in sym
     if is_us_stock:
         try:
-            import insider_data
+            from providers import insider_data
             sm = insider_data.smart_money(sym)
             sec = next((x for x in sm["feeds"] if x.get("source") == "SEC EDGAR"), None)
             if sec:
@@ -547,7 +547,7 @@ def _full(raw, sym):
 
         # opções: put/call OI (contrário nos extremos) + IV vs vol realizada
         try:
-            import markets_data
+            from providers import markets_data
             ch = markets_data.option_chain(sym)
             if not ch.get("error") and ch.get("dte", 0) < 7:
                 # vencimento 0DTE distorce IV e OI — usa o 1º com >=7 dias
@@ -624,7 +624,7 @@ def _full(raw, sym):
 
     if sym in _AIRLINES:
         try:
-            import altdata
+            from providers import altdata
             tsa = altdata.traffic()
             mom = tsa.get("mom_pct")
             if mom is not None:
@@ -636,7 +636,7 @@ def _full(raw, sym):
 
     if sym in _SHIPPING:
         try:
-            import altdata
+            from providers import altdata
             gs = altdata.gscpi_series()
             last_gs = gs["values"][-1]
             yoy = last_gs - gs["values"][-13] if len(gs["values"]) >= 13 else None
@@ -651,7 +651,7 @@ def _full(raw, sym):
     # ── commodities: COT (CFTC); agrícolas: ENSO + clima ────────────────
     if not crypto and yf_sym.endswith("=F"):
         try:
-            import insider_data
+            from providers import insider_data
             sm = insider_data.smart_money(yf_sym)
             cot = next((x for x in sm["feeds"] if x.get("kind") == "positioning"), None)
             if cot and cot.get("latest"):
@@ -671,7 +671,7 @@ def _full(raw, sym):
     crop = _AGRI.get(yf_sym)
     if crop:
         try:
-            import altdata
+            from providers import altdata
             cli = altdata.climate()
             enso = cli["enso"]
             alerts = [f"{r['region']}: {', '.join(r['flags'])}"

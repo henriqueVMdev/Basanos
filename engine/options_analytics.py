@@ -71,7 +71,7 @@ def bs(kind: str, s, k, t, sigma, r=0.04, q=0.0) -> dict:
 
 def _risk_free() -> float:
     try:
-        import markets_data
+        from providers import markets_data
         pts = {p["label"]: p["now"] for p in markets_data.yield_curve()["points"]}
         v = pts.get("3M")
         return v / 100 if v else 0.04
@@ -103,7 +103,7 @@ _MONEYNESS = [0.80, 0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15, 1.20]
 
 
 def vol_surface(symbol: str, max_expiries: int = 6) -> dict:
-    import markets_data
+    from providers import markets_data
 
     def fetch():
         first = markets_data.option_chain(symbol)

@@ -25,7 +25,7 @@ from flask import Blueprint, jsonify, request
 
 hft_bp = Blueprint("hft", __name__)
 
-STATE_FILE = Path(__file__).parent / "data" / "hft_state.json"
+STATE_FILE = Path(__file__).parents[1] / "data" / "hft_state.json"
 _lock = threading.RLock()
 _thread = None
 _stop_flag = threading.Event()

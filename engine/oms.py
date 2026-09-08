@@ -30,7 +30,7 @@ import time
 import uuid
 from pathlib import Path
 
-_FILE = Path(__file__).parent / "oms_data.json"
+_FILE = Path(__file__).parents[1] / "data" / "oms_data.json"
 _lock = threading.Lock()
 
 _cache: dict = {}
@@ -161,7 +161,7 @@ def mark(symbol: str, market: str, exchange: str = "bybit") -> dict:
     """bid/ask/mid/last atuais. Cripto: ticker ccxt (5s). Tradfi: Yahoo (15s,
     atrasado ~15min; sem bid/ask usa last ± meia-spread estimada por classe)."""
     if market == "crypto":
-        from market_data import get_exchange, normalize_symbol
+        from providers.market_data import get_exchange, normalize_symbol
         pair = normalize_symbol(symbol, exchange)
 
         def fetch():
@@ -176,7 +176,7 @@ def mark(symbol: str, market: str, exchange: str = "bybit") -> dict:
 
         return _cached(("mark", "c", pair), 5, fetch)
 
-    import tradfi_data
+    from providers import tradfi_data
     yf_sym = tradfi_data.resolve(symbol)
     if yf_sym.startswith("^"):
         raise ValueError(f"{yf_sym} é um índice — não negociável; "
@@ -213,7 +213,7 @@ def mark(symbol: str, market: str, exchange: str = "bybit") -> dict:
 
 def _daily_vol(symbol: str, market: str, exchange: str) -> float | None:
     def fetch():
-        import technical_data
+        from providers import technical_data
         df = technical_data.history(symbol, market, "1d", 60, exchange)
         if df.empty or len(df) < 10:
             return None
@@ -261,7 +261,7 @@ def pre_trade(body: dict) -> dict:
     warnings = []
     slippage_bps, book_coverage = None, None
     if market == "crypto":
-        from market_data import get_exchange, normalize_symbol
+        from providers.market_data import get_exchange, normalize_symbol
         pair = normalize_symbol(symbol, exchange)
         ob = get_exchange(exchange).fetch_order_book(pair, limit=50)
         levels = ob["asks"] if side == "buy" else ob["bids"]
@@ -427,7 +427,7 @@ def submit_order(body: dict) -> dict:
             if order_type == "market":
                 price = None
                 if market == "crypto":
-                    from market_data import get_exchange, normalize_symbol
+                    from providers.market_data import get_exchange, normalize_symbol
                     pair = normalize_symbol(symbol, exchange)
                     ob = get_exchange(exchange).fetch_order_book(pair, limit=50)
                     levels = ob["asks"] if side == "buy" else ob["bids"]
@@ -445,7 +445,7 @@ def submit_order(body: dict) -> dict:
 
     # contas Bybit: ordem REAL via ccxt
     ex = _bybit_client(account)
-    from market_data import normalize_symbol
+    from providers.market_data import normalize_symbol
     pair = normalize_symbol(symbol, "bybit")
     qty_p = float(ex.amount_to_precision(pair, qty))
     try:

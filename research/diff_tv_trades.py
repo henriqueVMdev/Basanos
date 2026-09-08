@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pandas as pd
 
-from market_data import fetch_ohlcv
+from providers.market_data import fetch_ohlcv
 import strategies.mm9_pullback as mm9
 
 # [side, entry_tm_ms, entry_p, exit_tm_ms, exit_p, exit_comment, pnl_usdt]

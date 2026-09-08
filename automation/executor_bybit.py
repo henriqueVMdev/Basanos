@@ -71,7 +71,7 @@ def _get_client(profile=None):
 
 
 def _sym(dep) -> str:
-    from market_data import normalize_symbol
+    from providers.market_data import normalize_symbol
     return normalize_symbol(dep["symbol"], "bybit")
 
 

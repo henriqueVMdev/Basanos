@@ -72,7 +72,7 @@ def _download_data_safe(symbol: str, interval: str, exchange: str | None = None)
     DatetimeIndex (UTC, tz-naive).
     """
     if exchange:
-        from market_data import SUPPORTED_EXCHANGES, fetch_ohlcv
+        from providers.market_data import SUPPORTED_EXCHANGES, fetch_ohlcv
         if exchange.lower() in SUPPORTED_EXCHANGES:
             import time as _time
             key = (symbol.upper(), interval, exchange.lower())
@@ -123,7 +123,16 @@ def _download_data_safe(symbol: str, interval: str, exchange: str | None = None)
         yf_period = "2y"
 
     ticker = yf.Ticker(yf_symbol)
-    df = ticker.history(period=yf_period, interval=yf_interval)
+    # O timeout padrão do curl usado pelo yfinance é curto (10 s). No diário,
+    # `period="max"` pode começar a transferir décadas de candles e expirar no
+    # meio; o yfinance então devolve um DataFrame vazio, embora o ticker exista.
+    df = ticker.history(period=yf_period, interval=yf_interval, timeout=30)
+
+    # Se o histórico máximo ainda falhar (Yahoo instável/rate limit), tenta uma
+    # janela menor. Dois anos mantêm ~500 candles — suficientes para os maiores
+    # warm-ups das estratégias atuais — e evitam deixar o gráfico sem dados.
+    if df.empty and yf_interval == "1d" and yf_period == "max":
+        df = ticker.history(period="2y", interval="1d", timeout=30)
 
     if df.empty:
         raise ValueError(f"Nenhum dado retornado para '{yf_symbol}' (intervalo={yf_interval})")
@@ -763,7 +772,7 @@ def api_backtest_exchanges():
     candles vêm da exchange escolhida em vez do yfinance. `symbol` pode ser só
     a base (ex.: 'BTC') — é normalizado pro perp da exchange automaticamente.
     """
-    from market_data import SUPPORTED_EXCHANGES
+    from providers.market_data import SUPPORTED_EXCHANGES
     return jsonify({"exchanges": list(SUPPORTED_EXCHANGES)})
 
 
@@ -1118,7 +1127,7 @@ def _build_wfa_cost_ctx(df, body, cfg_dict):
     from costs.calculator import CostCalculator
     from costs.config import DEFAULT_FEES, SCENARIOS, ExchangeFees
     from costs.funding import get_funding_events
-    from market_data import normalize_symbol
+    from providers.market_data import normalize_symbol
 
     cost_exchange = (body.get("cost_exchange") or body.get("exchange") or "binance").lower()
     if cost_exchange not in DEFAULT_FEES:
@@ -1963,6 +1972,11 @@ _optimizer_progress = {"current": 0, "total": 0, "valid": 0, "status": "idle"}
 _optimizer_lock = threading.Lock()
 _optimizer_result_store = {"data": None, "error": None}
 
+# Limites do brute force. O contador nunca deve expandir o produto cartesiano
+# apenas para descobrir que o grid era grande demais.
+_OPTIMIZER_MAX_COMBINATIONS = 2_000_000
+_OPTIMIZER_EXACT_COUNT_LIMIT = 100_000
+
 
 def _parse_grid_generic(grid_raw, schema):
     """Converte valores do grid usando o CONFIG_SCHEMA da estrategia para tipos corretos."""
@@ -1973,7 +1987,12 @@ def _parse_grid_generic(grid_raw, schema):
 
     typed = {}
     for key, values in grid_raw.items():
-        if not isinstance(values, list) or len(values) == 0:
+        if not isinstance(values, list):
+            continue
+        if len(values) == 0:
+            # Uma selecao explicitamente vazia torna o grid invalido. Antes a
+            # chave era omitida e podia herdar silenciosamente um valor antigo.
+            typed[key] = []
             continue
         ft = type_map.get(key)
         if ft is None:
@@ -2001,17 +2020,52 @@ def _infer_grid_type(values):
         return "select"
 
 
-def _generate_combos(grid, validator=None):
-    """Gera todas as combinacoes de parametros a partir de um grid dict."""
+def _grid_product_size(grid):
+    """Tamanho bruto do produto cartesiano, sem alocar as combinacoes."""
+    if not grid:
+        return 1
+    total = 1
+    for values in grid.values():
+        if not values:
+            return 0
+        total *= len(values)
+    return total
+
+
+def _iter_combos(grid):
+    """Itera o produto cartesiano sem materializa-lo em memoria."""
     keys = sorted(grid.keys())
     values = [grid[k] for k in keys]
-    combos = []
     for combo in itertools.product(*values):
-        params = dict(zip(keys, combo))
-        if validator and not validator(params):
-            continue
-        combos.append(params)
-    return combos
+        yield dict(zip(keys, combo))
+
+
+def _optimizer_combo_count(module, grid, fixed_params=None):
+    """Retorna (count, exact, raw_count) sem expandir grids gigantes."""
+    raw_count = _grid_product_size(grid)
+    if raw_count == 0:
+        return 0, True, 0
+
+    strategy_counter = getattr(module, "count_optimizer_configs", None)
+    if strategy_counter:
+        return int(strategy_counter(grid, fixed_params or {})), True, raw_count
+
+    validator = getattr(module, "is_valid_config", None)
+    if validator and raw_count <= _OPTIMIZER_EXACT_COUNT_LIMIT:
+        count = sum(1 for params in _iter_combos(grid) if validator(params))
+        return count, True, raw_count
+
+    # Para estrategias sem contador condicional, o bruto e um limite superior.
+    # Ainda e muito mais util que travar a API tentando obter o valor exato.
+    return raw_count, validator is None, raw_count
+
+
+def _iter_optimizer_combos(module, grid, fixed_params=None):
+    strategy_iterator = getattr(module, "iter_optimizer_configs", None)
+    if strategy_iterator:
+        yield from strategy_iterator(grid, fixed_params or {})
+    else:
+        yield from _iter_combos(grid)
 
 
 def _calc_optimizer_row(result, params, param_labels):
@@ -2098,7 +2152,7 @@ def api_optimizer_grids():
 
 @app.route("/api/optimizer/count", methods=["POST"])
 def api_optimizer_count():
-    """Conta quantas combinacoes o grid vai gerar (sem rodar)."""
+    """Conta combinacoes sem materializar o produto cartesiano inteiro."""
     try:
         body = request.get_json(force=True) or {}
         grid_raw = body.get("grid", {})
@@ -2106,11 +2160,28 @@ def api_optimizer_count():
 
         module = _load_strategy(strategy_file)
         schema = getattr(module, "CONFIG_SCHEMA", [])
-        validator = getattr(module, "is_valid_config", None)
-
         typed_grid = _parse_grid_generic(grid_raw, schema)
-        combos = _generate_combos(typed_grid, validator)
-        return jsonify({"count": len(combos)})
+        fixed_params = dict(body.get("config") or {})
+        count, exact, raw_count = _optimizer_combo_count(
+            module, typed_grid, fixed_params)
+        too_many = count > _OPTIMIZER_MAX_COMBINATIONS
+        message = None
+        if count == 0:
+            message = ("Nenhuma combinacao valida. Selecione ao menos um valor "
+                       "para cada parametro.")
+        elif too_many:
+            message = (
+                f"Grid com {count:,} combinacoes; o limite e "
+                f"{_OPTIMIZER_MAX_COMBINATIONS:,}. Reduza os intervalos."
+            )
+        return jsonify({
+            "count": count,
+            "exact": exact,
+            "raw_count": raw_count,
+            "too_many": too_many,
+            "max_combinations": _OPTIMIZER_MAX_COMBINATIONS,
+            "message": message,
+        })
     except Exception as e:
         return jsonify({"error": str(e), "count": 0}), 400
 
@@ -2139,13 +2210,20 @@ def _run_optimizer_compute(df_data, module, grid_raw, capital, min_trades, rank_
     param_labels = _build_param_labels(schema)
 
     typed_grid = _parse_grid_generic(grid_raw, schema)
-    combos = _generate_combos(typed_grid, validator)
-    total = len(combos)
+    semantic_count, _exact, raw_count = _optimizer_combo_count(
+        module, typed_grid, fixed_params)
+    has_strategy_iterator = callable(getattr(module, "iter_optimizer_configs", None))
+    # Sem iterador condicional, o loop ainda visita o produto bruto e o progresso
+    # deve refletir isso, mesmo quando o endpoint de contagem calculou os validos.
+    total = semantic_count if has_strategy_iterator else raw_count
 
-    if total == 0:
+    if semantic_count == 0:
         return None, "Nenhuma combinacao gerada. Verifique o grid."
-    if total > 2000000:
-        return None, f"Grid muito grande ({total} combinacoes). Reduza os parametros."
+    if total > _OPTIMIZER_MAX_COMBINATIONS:
+        return None, (
+            f"Grid muito grande ({total:,} combinacoes; bruto {raw_count:,}). "
+            f"Limite: {_OPTIMIZER_MAX_COMBINATIONS:,}. Reduza os parametros."
+        )
 
     # Limpa cancel ANTES de marcar running — evita race com thread anterior
     _optimizer_cancel.clear()
@@ -2160,23 +2238,31 @@ def _run_optimizer_compute(df_data, module, grid_raw, capital, min_trades, rank_
     t0 = time.time()
     stopped = False
 
-    for i, params in enumerate(combos):
+    for i, params in enumerate(
+            _iter_optimizer_combos(module, typed_grid, fixed_params), start=1):
         if _optimizer_cancel.is_set():
             stopped = True
             break
+        if validator and not validator(params):
+            with _optimizer_lock:
+                _optimizer_progress["current"] = i
+            continue
         try:
             run_params = {**base_extra, **params, "_fast": True}
             if prepare:
                 run_params = prepare(dict(run_params))
 
             result = module.run(df_data, run_params)
-            row = _calc_optimizer_row(result, params, param_labels)
+            # Exibe apenas as chaves escolhidas no grid. Os hooks de estrategia
+            # podem acrescentar defaults canonicos para executar corretamente.
+            display_params = {key: params.get(key) for key in typed_grid}
+            row = _calc_optimizer_row(result, display_params, param_labels)
             if row and row["Trades"] >= min_trades:
                 results.append(row)
         except Exception:
             pass
         with _optimizer_lock:
-            _optimizer_progress["current"] = i + 1
+            _optimizer_progress["current"] = i
             _optimizer_progress["valid"] = len(results)
 
     elapsed = time.time() - t0
@@ -2775,7 +2861,7 @@ def api_prop_challenge_simulate():
 def regime_detect():
     """Detecta regimes de mercado via HMM, Markov Switching ou Change-Point."""
     try:
-        from regime_detection import detect_regimes
+        from engine.regime_detection import detect_regimes
 
         content_type = request.content_type or ""
 
@@ -2826,7 +2912,7 @@ def regime_detect():
 #  Trade Journal — registro manual de operações por estratégia
 # ─────────────────────────────────────────────────────────────────────────────
 
-JOURNAL_FILE = Path(__file__).parent / "journal_data.json"
+JOURNAL_FILE = Path(__file__).parent / "data" / "journal_data.json"
 _journal_lock = threading.Lock()
 
 
@@ -3040,7 +3126,7 @@ def api_journal_sync():
     since_days = int(body.get("since_days", 30) or 30)
 
     try:
-        from exchange_sync import sync_all
+        from providers.exchange_sync import sync_all
     except Exception as e:
         return jsonify({"error": f"módulo de sync indisponível: {e}"}), 500
 
@@ -3091,15 +3177,15 @@ from automation.api import automation_bp  # noqa: E402
 app.register_blueprint(automation_bp)
 
 # ─── Terminal (monitor / screener / DES / alertas / notícias) ─────────────
-from terminal_api import terminal_bp  # noqa: E402
+from api.terminal_api import terminal_bp  # noqa: E402
 app.register_blueprint(terminal_bp)
 
 # ─── Agentes de IA (padrões do AgentHUB: loop nativo + gateways opcionais) ─
-from agents_api import agents_bp  # noqa: E402
+from api.agents_api import agents_bp  # noqa: E402
 app.register_blueprint(agents_bp)
 
 # ─── HFT on-chain (memecoins, paper) ───────────────────────────────────────
-from hft_engine import hft_bp  # noqa: E402
+from api.hft_engine import hft_bp  # noqa: E402
 app.register_blueprint(hft_bp)
 
 
@@ -3244,7 +3330,7 @@ _hype_cache = {}
 HYPE_CACHE_TTL = 180
 
 
-import x_scraper as _x_scraper
+from providers import x_scraper as _x_scraper
 _x_lock = threading.Lock()  # um navegador por vez
 
 

@@ -59,11 +59,17 @@ export const useOptimizerStore = defineStore('optimizer', () => {
 
   // Estado
   const isRunning = ref(false)
-  const comboCount = ref(0)
+  const comboCount = ref(null)
+  const comboCountLoading = ref(false)
+  const comboCountError = ref(null)
+  const comboCountExact = ref(true)
+  const comboCountTooMany = ref(false)
+  const comboCountLimit = ref(null)
   const results = ref(null)
   const error = ref(null)
   const progress = ref({ current: 0, total: 0, valid: 0 })
   let _progressTimer = null
+  let _countRequestId = 0
 
   // Grid ativo (custom ou preset)
   const activeGrid = computed(() => {
@@ -160,11 +166,32 @@ export const useOptimizerStore = defineStore('optimizer', () => {
   }
 
   async function updateComboCount() {
+    const requestId = ++_countRequestId
+    comboCountLoading.value = true
+    comboCountError.value = null
     try {
-      const { data } = await getOptimizerCount(activeGrid.value, capital.value, strategyFile.value)
-      comboCount.value = data.count || 0
-    } catch {
-      comboCount.value = 0
+      const btStore = useBacktestStore()
+      const { data } = await getOptimizerCount(
+        activeGrid.value,
+        capital.value,
+        strategyFile.value,
+        btStore.params,
+      )
+      if (requestId !== _countRequestId) return
+      comboCount.value = Number(data.count ?? 0)
+      comboCountExact.value = data.exact !== false
+      comboCountTooMany.value = Boolean(data.too_many)
+      comboCountLimit.value = Number(data.max_combinations) || null
+      comboCountError.value = data.message || null
+    } catch (e) {
+      if (requestId !== _countRequestId) return
+      comboCount.value = null
+      comboCountExact.value = true
+      comboCountTooMany.value = false
+      comboCountLimit.value = null
+      comboCountError.value = e.response?.data?.error || e.message || 'Falha ao contar combinacoes'
+    } finally {
+      if (requestId === _countRequestId) comboCountLoading.value = false
     }
   }
 
@@ -469,7 +496,9 @@ export const useOptimizerStore = defineStore('optimizer', () => {
     gridMode, customGrid, useCustomGrid, activeGrid, strategyFile, gridLoadedExternally,
     cycleLongMonths, cycleShortMonths,
     capital, minTrades, rankBy, topN,
-    isRunning, comboCount, results, error, progress,
+    isRunning, comboCount, comboCountLoading, comboCountError,
+    comboCountExact, comboCountTooMany, comboCountLimit,
+    results, error, progress,
     fetchAssets, fetchStrategies, selectStrategy, fetchGrids,
     updateComboCount, run, stop, sendBestToBacktest, loadBestToGrid,
     loadRangesFromDashboard, downloadCsv,

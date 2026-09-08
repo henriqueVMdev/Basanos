@@ -3,9 +3,9 @@ Estratégia DePaula Single + Pullback [v2] — Backtesting em Python
 Conversão fiel do Pine Script para Python usando pandas/numpy.
 
 Uso:
-    python backtesting.py                          # usa dados de exemplo via yfinance
-    python backtesting.py --csv dados.csv          # usa CSV local (colunas: Date,Open,High,Low,Close,Volume)
-    python backtesting.py --symbol BTCUSDT --interval 1d
+    python -m engine.backtesting                          # usa dados de exemplo via yfinance
+    python -m engine.backtesting --csv dados.csv          # usa CSV local (colunas: Date,Open,High,Low,Close,Volume)
+    python -m engine.backtesting --symbol BTCUSDT --interval 1d
 """
 
 import numpy as np
@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 import argparse
 import sys
+from pathlib import Path
 
 
 # ==============================
@@ -851,7 +852,7 @@ def main():
             }
             for t in result.trades
         ])
-        output_path = "trades_resultado.csv"
+        output_path = Path(__file__).parents[1] / "data" / "trades_resultado.csv"
         trades_df.to_csv(output_path, index=False, encoding="utf-8-sig")
         print(f"\n  Trades exportados para: {output_path}")
 

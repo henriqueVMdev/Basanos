@@ -136,7 +136,7 @@ class Runner(threading.Thread):
 
     def _exchange_now_ms(self, exchange: str) -> int:
         try:
-            from market_data import get_exchange
+            from providers.market_data import get_exchange
             now = int(get_exchange(exchange).fetch_time())
             self.clock_skew_ms = now - int(time.time() * 1000)
             return now
@@ -147,7 +147,7 @@ class Runner(threading.Thread):
 
     def _fetch_closed(self, exchange, symbol, interval, n_bars, now_ex):
         """Candles FECHADOS: descarta toda linha com open_ts + tf > now_ex."""
-        from market_data import fetch_ohlcv
+        from providers.market_data import fetch_ohlcv
         df = fetch_ohlcv(symbol, interval, exchange=exchange,
                          total=max(int(n_bars), _WARMUP_BARS))
         ts = (df.index - pd.Timestamp(0)).total_seconds().values * 1000

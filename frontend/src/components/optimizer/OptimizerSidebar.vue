@@ -216,9 +216,16 @@
     <section>
       <div class="flex items-center justify-between text-gray-400 mb-2">
         <span>Combinacoes:</span>
-        <span class="font-bold text-gray-200">{{ store.comboCount.toLocaleString() }}</span>
+        <span v-if="store.comboCountLoading" class="text-xs text-gray-400">calculando...</span>
+        <span v-else-if="store.comboCount !== null" class="font-bold text-gray-200">
+          {{ store.comboCountExact ? '' : 'ate ' }}{{ store.comboCount.toLocaleString('pt-BR') }}
+        </span>
+        <span v-else class="font-bold text-gray-500">--</span>
       </div>
-      <div v-if="store.comboCount > 50000" class="text-accent-red-light text-xs mb-2">
+      <div v-if="store.comboCountError" class="text-accent-red-light text-xs mb-2">
+        {{ store.comboCountError }}
+      </div>
+      <div v-else-if="store.comboCount > 50000" class="text-accent-red-light text-xs mb-2">
         Muitas combinacoes! Pode demorar bastante.
       </div>
       <!-- Progress bar -->
@@ -251,8 +258,8 @@
       <button
         v-if="!store.isRunning"
         @click="store.run()"
-        :disabled="store.comboCount === 0"
-        class="w-full py-2.5 rounded-lg font-semibold text-sm bg-accent-yellow text-surface-900 hover:bg-accent-yellow/90 transition-all duration-200"
+        :disabled="store.comboCountLoading || store.comboCount === null || store.comboCount === 0 || store.comboCountTooMany"
+        class="w-full py-2.5 rounded-lg font-semibold text-sm bg-accent-yellow text-surface-900 hover:bg-accent-yellow/90 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         Rodar Otimizacao
       </button>
@@ -406,12 +413,20 @@ watch(ranges, () => {
     if (field.type !== 'number') continue
     const r = ranges[field.key]
     if (!r) continue
+    const min = Number(r.min)
+    const max = Number(r.max)
+    const requestedStep = Number(r.step)
+    if (!Number.isFinite(min) || !Number.isFinite(max)
+        || !Number.isFinite(requestedStep) || requestedStep <= 0 || min > max) {
+      store.customGrid[field.key] = []
+      continue
+    }
     const arr = []
-    const step = Math.max(r.step || 1, 0.001)
-    for (let v = r.min; v <= r.max + step * 0.01; v += step) {
+    const step = Math.max(requestedStep, 0.001)
+    for (let v = min; v <= max + step * 0.01; v += step) {
       arr.push(Math.round(v * 1000) / 1000)
     }
-    if (arr.length === 0) arr.push(r.min)
+    if (arr.length === 0) arr.push(min)
     store.customGrid[field.key] = arr
   }
 }, { deep: true })
@@ -419,7 +434,12 @@ watch(ranges, () => {
 // Strategy change
 function onStrategyChange(file) {
   const strat = store.strategies.find(s => s.file === file)
-  if (strat) store.selectStrategy(strat)
+  if (strat) {
+    // Campos com a mesma key em estrategias diferentes nao devem reaproveitar
+    // ranges antigos e sobrescrever o novo grid logo apos a troca.
+    for (const key of Object.keys(ranges)) delete ranges[key]
+    store.selectStrategy(strat)
+  }
 }
 
 // Selected asset
@@ -457,8 +477,13 @@ function toggleArrayItem(key, item) {
   if (!store.customGrid[key]) store.customGrid[key] = []
   const arr = store.customGrid[key]
   const idx = arr.indexOf(item)
-  if (idx >= 0) arr.splice(idx, 1)
-  else arr.push(item)
+  // Todo parametro precisa de ao menos um valor. Uma lista vazia era omitida
+  // pelo backend e podia herdar configuracao antiga sem o usuario perceber.
+  if (idx >= 0) {
+    if (arr.length > 1) arr.splice(idx, 1)
+    return
+  }
+  arr.push(item)
 }
 
 function loadBest() {

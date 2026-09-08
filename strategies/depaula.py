@@ -11,6 +11,7 @@ Usa o motor em backtesting.py (run_backtest + Config).
 import sys
 import os
 import math
+import itertools
 import numpy as np
 
 # Garante que o diretório raiz do projeto está no sys.path
@@ -18,7 +19,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from backtesting import run_backtest, Config
+from engine.backtesting import run_backtest, Config
 
 NAME = "DePaula — Ângulo de MA"
 DESCRIPTION = "Detecta tendências pelo ângulo da média móvel. Suporta pullback, stop e múltiplos modos de saída."
@@ -399,6 +400,169 @@ def is_valid_config(params):
             return False
 
     return True
+
+
+_OPTIMIZER_DEFAULTS = {
+    "exit_mode": "Banda + Tendência",
+    "pct_up": 3.0,
+    "pct_dn": 3.0,
+    "alvo_fixo": 5.0,
+    "use_stop": False,
+    "stop_type": "ATR",
+    "stop_atr_mult": 2.0,
+    "stop_fixo_pct": 2.0,
+    "stop_band_pct": 1.5,
+    "use_parcial": False,
+    "parcial_pct": 50.0,
+    "parcial_mode": "Banda",
+    "parcial_banda_pct": 1.5,
+    "parcial_alvo_fixo": 2.0,
+}
+
+_OPTIMIZER_CONDITIONAL_KEYS = {
+    "exit_mode", "pct_up", "pct_dn", "alvo_fixo",
+    "use_stop", "stop_type", "stop_atr_mult", "stop_fixo_pct",
+    "stop_band_pct",
+    "use_parcial", "parcial_pct", "parcial_mode",
+    "parcial_banda_pct", "parcial_alvo_fixo",
+}
+
+
+def _optimizer_values(grid, fixed_params, key):
+    """Valores do grid; na ausência, usa config fixa e depois o default."""
+    if key in grid:
+        return list(grid[key])
+    return [fixed_params.get(key, _OPTIMIZER_DEFAULTS[key])]
+
+
+def _optimizer_exit_variants(grid, fixed_params):
+    variants = []
+    for mode in _optimizer_values(grid, fixed_params, "exit_mode"):
+        if mode == "Banda + Tendência":
+            for pct in _optimizer_values(grid, fixed_params, "pct_up"):
+                variants.append({
+                    "exit_mode": mode,
+                    "pct_up": pct,
+                    "pct_dn": pct,
+                    "alvo_fixo": _OPTIMIZER_DEFAULTS["alvo_fixo"],
+                })
+        elif mode == "Alvo Fixo + Tendência":
+            for alvo in _optimizer_values(grid, fixed_params, "alvo_fixo"):
+                variants.append({
+                    "exit_mode": mode,
+                    "pct_up": _OPTIMIZER_DEFAULTS["pct_up"],
+                    "pct_dn": _OPTIMIZER_DEFAULTS["pct_dn"],
+                    "alvo_fixo": alvo,
+                })
+        else:  # Somente Tendência
+            variants.append({
+                "exit_mode": mode,
+                "pct_up": _OPTIMIZER_DEFAULTS["pct_up"],
+                "pct_dn": _OPTIMIZER_DEFAULTS["pct_dn"],
+                "alvo_fixo": _OPTIMIZER_DEFAULTS["alvo_fixo"],
+            })
+    return variants
+
+
+def _optimizer_stop_variants(grid, fixed_params):
+    variants = []
+    for enabled in _optimizer_values(grid, fixed_params, "use_stop"):
+        if not enabled:
+            variants.append({
+                "use_stop": False,
+                "stop_type": _OPTIMIZER_DEFAULTS["stop_type"],
+                "stop_atr_mult": _OPTIMIZER_DEFAULTS["stop_atr_mult"],
+                "stop_fixo_pct": _OPTIMIZER_DEFAULTS["stop_fixo_pct"],
+                "stop_band_pct": _OPTIMIZER_DEFAULTS["stop_band_pct"],
+            })
+            continue
+
+        for stop_type in _optimizer_values(grid, fixed_params, "stop_type"):
+            base = {
+                "use_stop": True,
+                "stop_type": stop_type,
+                "stop_atr_mult": _OPTIMIZER_DEFAULTS["stop_atr_mult"],
+                "stop_fixo_pct": _OPTIMIZER_DEFAULTS["stop_fixo_pct"],
+                "stop_band_pct": _OPTIMIZER_DEFAULTS["stop_band_pct"],
+            }
+            if stop_type == "ATR":
+                key = "stop_atr_mult"
+            elif stop_type == "Fixo (%)":
+                key = "stop_fixo_pct"
+            else:
+                key = "stop_band_pct"
+            for value in _optimizer_values(grid, fixed_params, key):
+                variants.append({**base, key: value})
+    return variants
+
+
+def _optimizer_partial_variants(grid, fixed_params):
+    variants = []
+    for enabled in _optimizer_values(grid, fixed_params, "use_parcial"):
+        if not enabled:
+            variants.append({
+                "use_parcial": False,
+                "parcial_pct": _OPTIMIZER_DEFAULTS["parcial_pct"],
+                "parcial_mode": _OPTIMIZER_DEFAULTS["parcial_mode"],
+                "parcial_banda_pct": _OPTIMIZER_DEFAULTS["parcial_banda_pct"],
+                "parcial_alvo_fixo": _OPTIMIZER_DEFAULTS["parcial_alvo_fixo"],
+            })
+            continue
+
+        for fraction in _optimizer_values(grid, fixed_params, "parcial_pct"):
+            for mode in _optimizer_values(grid, fixed_params, "parcial_mode"):
+                base = {
+                    "use_parcial": True,
+                    "parcial_pct": fraction,
+                    "parcial_mode": mode,
+                    "parcial_banda_pct": _OPTIMIZER_DEFAULTS["parcial_banda_pct"],
+                    "parcial_alvo_fixo": _OPTIMIZER_DEFAULTS["parcial_alvo_fixo"],
+                }
+                key = "parcial_banda_pct" if mode == "Banda" else "parcial_alvo_fixo"
+                for value in _optimizer_values(grid, fixed_params, key):
+                    variants.append({**base, key: value})
+    return variants
+
+
+def _optimizer_parts(grid, fixed_params=None):
+    """Partes independentes/condicionais do grid, sem ramificar campos inativos."""
+    fixed_params = dict(fixed_params or {})
+    if any(not values for values in grid.values()):
+        return [], [], [], [], []
+
+    independent_keys = sorted(set(grid) - _OPTIMIZER_CONDITIONAL_KEYS)
+    independent_values = [list(grid[key]) for key in independent_keys]
+    return (
+        independent_keys,
+        independent_values,
+        _optimizer_exit_variants(grid, fixed_params),
+        _optimizer_stop_variants(grid, fixed_params),
+        _optimizer_partial_variants(grid, fixed_params),
+    )
+
+
+def count_optimizer_configs(grid, fixed_params=None):
+    """Conta o grid DePaula em tempo constante, ignorando campos inativos."""
+    keys, values, exits, stops, partials = _optimizer_parts(grid, fixed_params)
+    if not exits or not stops or not partials:
+        return 0
+    independent_count = math.prod(len(items) for items in values) if keys else 1
+    return independent_count * len(exits) * len(stops) * len(partials)
+
+
+def iter_optimizer_configs(grid, fixed_params=None):
+    """Itera somente configurações semanticamente distintas e válidas."""
+    keys, values, exits, stops, partials = _optimizer_parts(grid, fixed_params)
+    if not exits or not stops or not partials:
+        return
+
+    independent_product = itertools.product(*values) if keys else [()]
+    for raw_values in independent_product:
+        independent = dict(zip(keys, raw_values))
+        for exit_params, stop_params, partial_params in itertools.product(
+                exits, stops, partials):
+            params = {**independent, **exit_params, **stop_params, **partial_params}
+            yield prepare_optimizer_params(params)
 
 
 def prepare_optimizer_params(params):
