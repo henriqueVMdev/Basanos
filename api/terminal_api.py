@@ -29,71 +29,65 @@ _cached = ttl_cache()
 # /watch — tickers ao vivo da watchlist
 @terminal_bp.get("/watch")
 def watch():
-    try:
-        exchange = (request.args.get("exchange") or "bybit").lower()
-        bases = [s.strip() for s in (request.args.get("symbols") or "").split(",")
-                 if s.strip()]
-        tradfi = [s.strip() for s in (request.args.get("tradfi") or "").split(",")
-                  if s.strip()]
-        if not bases and not tradfi:
-            return jsonify({"rows": []})
-        rows = []
-        if bases:
-            ex = get_exchange(exchange)
-            syms = [normalize_symbol(b, exchange) for b in bases]
-            tickers = ex.fetch_tickers(syms)
-            try:
-                frs = ex.fetch_funding_rates(syms)
-            except Exception:
-                frs = {}
-            for base, sym in zip(bases, syms):
-                t = tickers.get(sym) or {}
-                fr = frs.get(sym) or {}
-                rows.append({
-                    "base": base.upper(),
-                    "symbol": sym,
-                    "market": "crypto",
-                    "last": to_float(t.get("last")),
-                    "pct24h": to_float(t.get("percentage")),
-                    "high24": to_float(t.get("high")),
-                    "low24": to_float(t.get("low")),
-                    "vol_usd": to_float(t.get("quoteVolume")),
-                    "funding": to_float(fr.get("fundingRate")),
-                    "next_funding_ts": fr.get("fundingTimestamp") or fr.get("nextFundingTimestamp"),
-                })
-        if tradfi:
-            from providers import tradfi_data
-            tq = tradfi_data.quotes(tradfi)
-            rows.extend(tq[s] for s in tradfi if tq.get(s))
-        return jsonify({"rows": rows, "ts": int(time.time() * 1000)})
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    exchange = (request.args.get("exchange") or "bybit").lower()
+    bases = [s.strip() for s in (request.args.get("symbols") or "").split(",")
+             if s.strip()]
+    tradfi = [s.strip() for s in (request.args.get("tradfi") or "").split(",")
+              if s.strip()]
+    if not bases and not tradfi:
+        return jsonify({"rows": []})
+    rows = []
+    if bases:
+        ex = get_exchange(exchange)
+        syms = [normalize_symbol(b, exchange) for b in bases]
+        tickers = ex.fetch_tickers(syms)
+        try:
+            frs = ex.fetch_funding_rates(syms)
+        except Exception:
+            frs = {}
+        for base, sym in zip(bases, syms):
+            t = tickers.get(sym) or {}
+            fr = frs.get(sym) or {}
+            rows.append({
+                "base": base.upper(),
+                "symbol": sym,
+                "market": "crypto",
+                "last": to_float(t.get("last")),
+                "pct24h": to_float(t.get("percentage")),
+                "high24": to_float(t.get("high")),
+                "low24": to_float(t.get("low")),
+                "vol_usd": to_float(t.get("quoteVolume")),
+                "funding": to_float(fr.get("fundingRate")),
+                "next_funding_ts": fr.get("fundingTimestamp") or fr.get("nextFundingTimestamp"),
+            })
+    if tradfi:
+        from providers import tradfi_data
+        tq = tradfi_data.quotes(tradfi)
+        rows.extend(tq[s] for s in tradfi if tq.get(s))
+    return jsonify({"rows": rows, "ts": int(time.time() * 1000)})
 
 
 # /spark — closes p/ sparkline
 @terminal_bp.get("/spark")
 def spark():
-    try:
-        exchange = (request.args.get("exchange") or "bybit").lower()
-        base = (request.args.get("symbol") or "").strip()
-        tf = request.args.get("tf", "15m")
-        bars = min(int(request.args.get("bars", 96)), 500)
-        if not base:
-            return jsonify({"error": "symbol obrigatório"}), 400
-        if (request.args.get("market") or "").lower() == "tradfi":
-            from providers import tradfi_data
-            return jsonify({"closes": tradfi_data.closes(base, tf, bars)})
-        sym = normalize_symbol(base, exchange)
+    exchange = (request.args.get("exchange") or "bybit").lower()
+    base = (request.args.get("symbol") or "").strip()
+    tf = request.args.get("tf", "15m")
+    bars = min(int(request.args.get("bars", 96)), 500)
+    if not base:
+        return jsonify({"error": "symbol obrigatório"}), 400
+    if (request.args.get("market") or "").lower() == "tradfi":
+        from providers import tradfi_data
+        return jsonify({"closes": tradfi_data.closes(base, tf, bars)})
+    sym = normalize_symbol(base, exchange)
 
-        def fetch():
-            ex = get_exchange(exchange)
-            raw = ex.fetch_ohlcv(sym, timeframe=tf, limit=bars)
-            return [to_float(c[4]) for c in raw]
+    def fetch():
+        ex = get_exchange(exchange)
+        raw = ex.fetch_ohlcv(sym, timeframe=tf, limit=bars)
+        return [to_float(c[4]) for c in raw]
 
-        closes = _cached(("spark", exchange, sym, tf, bars), 600, fetch)
-        return jsonify({"closes": closes})
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    closes = _cached(("spark", exchange, sym, tf, bars), 600, fetch)
+    return jsonify({"closes": closes})
 
 
 # /screener — ranking de perps
@@ -119,170 +113,155 @@ def _kline_stats(ex, sym):
 
 @terminal_bp.get("/screener")
 def screener():
-    try:
-        market = (request.args.get("market") or "crypto").lower()
-        if market != "crypto":
-            from providers import tradfi_data
-            rows = tradfi_data.screener_rows(market)
-            return jsonify({"rows": rows, "ts": int(time.time() * 1000)})
-        exchange = (request.args.get("exchange") or "bybit").lower()
-        top = min(int(request.args.get("top", 50)), 100)
-        ex = get_exchange(exchange)
-
-        tickers = _cached(("alltickers", exchange), 55, ex.fetch_tickers)
-        perps = [(s, t) for s, t in tickers.items()
-                 if s.endswith("/USDT:USDT") and t.get("quoteVolume")]
-        perps.sort(key=lambda x: x[1]["quoteVolume"], reverse=True)
-        perps = perps[:top]
-
-        def fetch_frs():
-            try:
-                return ex.fetch_funding_rates([s for s, _ in perps])
-            except Exception:
-                return {}
-        frs = _cached(("frs", exchange, top), 300, fetch_frs)
-
-        rows = []
-        for sym, t in perps:
-            stats = _kline_stats(ex, sym)
-            fr = frs.get(sym) or {}
-            rows.append({
-                "base": sym.split("/")[0],
-                "symbol": sym,
-                "last": to_float(t.get("last")),
-                "pct24h": to_float(t.get("percentage")),
-                "vol_usd": to_float(t.get("quoteVolume")),
-                "funding": to_float(fr.get("fundingRate")),
-                **{k: to_float(v) for k, v in stats.items()},
-            })
+    market = (request.args.get("market") or "crypto").lower()
+    if market != "crypto":
+        from providers import tradfi_data
+        rows = tradfi_data.screener_rows(market)
         return jsonify({"rows": rows, "ts": int(time.time() * 1000)})
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    exchange = (request.args.get("exchange") or "bybit").lower()
+    top = min(int(request.args.get("top", 50)), 100)
+    ex = get_exchange(exchange)
+
+    tickers = _cached(("alltickers", exchange), 55, ex.fetch_tickers)
+    perps = [(s, t) for s, t in tickers.items()
+             if s.endswith("/USDT:USDT") and t.get("quoteVolume")]
+    perps.sort(key=lambda x: x[1]["quoteVolume"], reverse=True)
+    perps = perps[:top]
+
+    def fetch_frs():
+        try:
+            return ex.fetch_funding_rates([s for s, _ in perps])
+        except Exception:
+            return {}
+    frs = _cached(("frs", exchange, top), 300, fetch_frs)
+
+    rows = []
+    for sym, t in perps:
+        stats = _kline_stats(ex, sym)
+        fr = frs.get(sym) or {}
+        rows.append({
+            "base": sym.split("/")[0],
+            "symbol": sym,
+            "last": to_float(t.get("last")),
+            "pct24h": to_float(t.get("percentage")),
+            "vol_usd": to_float(t.get("quoteVolume")),
+            "funding": to_float(fr.get("fundingRate")),
+            **{k: to_float(v) for k, v in stats.items()},
+        })
+    return jsonify({"rows": rows, "ts": int(time.time() * 1000)})
 
 
 # /des — visão geral do instrumento
 @terminal_bp.get("/des")
 def des():
-    try:
-        exchange = (request.args.get("exchange") or "bybit").lower()
-        market = (request.args.get("market") or "crypto").lower()
-        base = (request.args.get("symbol") or "").strip()
-        if not base:
-            return jsonify({"error": "symbol obrigatório"}), 400
+    exchange = (request.args.get("exchange") or "bybit").lower()
+    market = (request.args.get("market") or "crypto").lower()
+    base = (request.args.get("symbol") or "").strip()
+    if not base:
+        return jsonify({"error": "symbol obrigatório"}), 400
 
-        if market == "tradfi":
+    if market == "tradfi":
+        from providers import tradfi_data
+        return jsonify(tradfi_data.describe(base))
+
+    try:
+        ex = get_exchange(exchange)
+        sym = normalize_symbol(base, exchange)
+        mkt = ex.market(sym)
+    except Exception:
+        # modo auto: símbolo não existe na exchange -> tenta tradicional
+        if market == "auto":
             from providers import tradfi_data
             return jsonify(tradfi_data.describe(base))
+        raise
+    ticker = ex.fetch_ticker(sym)
 
-        try:
-            ex = get_exchange(exchange)
-            sym = normalize_symbol(base, exchange)
-            mkt = ex.market(sym)
-        except Exception:
-            # modo auto: símbolo não existe na exchange -> tenta tradicional
-            if market == "auto":
-                from providers import tradfi_data
-                return jsonify(tradfi_data.describe(base))
-            raise
-        ticker = ex.fetch_ticker(sym)
+    try:
+        oi = ex.fetch_open_interest(sym)
+    except Exception:
+        oi = {}
+    try:
+        fr = ex.fetch_funding_rate(sym)
+    except Exception:
+        fr = {}
 
-        try:
-            oi = ex.fetch_open_interest(sym)
-        except Exception:
-            oi = {}
-        try:
-            fr = ex.fetch_funding_rate(sym)
-        except Exception:
-            fr = {}
+    stats = _kline_stats(ex, sym)
 
-        stats = _kline_stats(ex, sym)
+    # histórico de funding 30d (cache parquet do módulo de custos)
+    funding_hist = {"dates": [], "rates": []}
+    try:
+        from costs.funding import get_funding_events
+        now = int(time.time() * 1000)
+        evs = get_funding_events(exchange, sym, now - 30 * 86_400_000, now)
+        funding_hist = {
+            "dates": [int(e.timestamp) for e in evs],
+            "rates": [float(e.rate) for e in evs],
+        }
+    except Exception:
+        pass
 
-        # histórico de funding 30d (cache parquet do módulo de custos)
-        funding_hist = {"dates": [], "rates": []}
-        try:
-            from costs.funding import get_funding_events
-            now = int(time.time() * 1000)
-            evs = get_funding_events(exchange, sym, now - 30 * 86_400_000, now)
-            funding_hist = {
-                "dates": [int(e.timestamp) for e in evs],
-                "rates": [float(e.rate) for e in evs],
-            }
-        except Exception:
-            pass
+    fees = {}
+    try:
+        from costs.config import DEFAULT_FEES
+        f = DEFAULT_FEES.get(exchange)
+        if f:
+            fees = {"maker": float(f.maker), "taker": float(f.taker)}
+    except Exception:
+        pass
 
-        fees = {}
-        try:
-            from costs.config import DEFAULT_FEES
-            f = DEFAULT_FEES.get(exchange)
-            if f:
-                fees = {"maker": float(f.maker), "taker": float(f.taker)}
-        except Exception:
-            pass
-
-        limits = mkt.get("limits") or {}
-        return jsonify({
-            "kind": "crypto",
-            "market": "crypto",
-            "base": base.upper(),
-            "symbol": sym,
-            "exchange": exchange,
-            "last": to_float(ticker.get("last")),
-            "pct24h": to_float(ticker.get("percentage")),
-            "high24": to_float(ticker.get("high")),
-            "low24": to_float(ticker.get("low")),
-            "vol_usd": to_float(ticker.get("quoteVolume")),
-            "open_interest": to_float(oi.get("openInterestAmount")),
-            "open_interest_usd": to_float(oi.get("openInterestValue")),
-            "funding": to_float(fr.get("fundingRate")),
-            "next_funding_ts": fr.get("fundingTimestamp") or fr.get("nextFundingTimestamp"),
-            "funding_hist": funding_hist,
-            "fees": fees,
-            "min_qty": to_float(((limits.get("amount") or {}).get("min"))),
-            "min_notional": to_float(((limits.get("cost") or {}).get("min"))),
-            "contract_size": to_float(mkt.get("contractSize")),
-            **{k: to_float(v) for k, v in stats.items()},
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    limits = mkt.get("limits") or {}
+    return jsonify({
+        "kind": "crypto",
+        "market": "crypto",
+        "base": base.upper(),
+        "symbol": sym,
+        "exchange": exchange,
+        "last": to_float(ticker.get("last")),
+        "pct24h": to_float(ticker.get("percentage")),
+        "high24": to_float(ticker.get("high")),
+        "low24": to_float(ticker.get("low")),
+        "vol_usd": to_float(ticker.get("quoteVolume")),
+        "open_interest": to_float(oi.get("openInterestAmount")),
+        "open_interest_usd": to_float(oi.get("openInterestValue")),
+        "funding": to_float(fr.get("fundingRate")),
+        "next_funding_ts": fr.get("fundingTimestamp") or fr.get("nextFundingTimestamp"),
+        "funding_hist": funding_hist,
+        "fees": fees,
+        "min_qty": to_float(((limits.get("amount") or {}).get("min"))),
+        "min_notional": to_float(((limits.get("cost") or {}).get("min"))),
+        "contract_size": to_float(mkt.get("contractSize")),
+        **{k: to_float(v) for k, v in stats.items()},
+    })
 
 
 # Mercado macro/derivativos: juros, crédito, opções, book
 @terminal_bp.get("/rates")
 def rates():
-    try:
-        from providers import markets_data
-        out = markets_data.yield_curve()
-        out = {**out, "credit": markets_data.credit_spreads()}
-        return jsonify(out)
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import markets_data
+    out = markets_data.yield_curve()
+    out = {**out, "credit": markets_data.credit_spreads()}
+    return jsonify(out)
 
 
 @terminal_bp.get("/options")
 def options():
-    try:
-        from providers import markets_data
-        from engine import options_analytics
-        base = (request.args.get("symbol") or "").strip()
-        if not base:
-            return jsonify({"error": "symbol obrigatório"}), 400
-        expiry = request.args.get("expiry") or None
-        chain = dict(markets_data.option_chain(base, expiry))
-        return jsonify(options_analytics.add_greeks(chain))
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import markets_data
+    from engine import options_analytics
+    base = (request.args.get("symbol") or "").strip()
+    if not base:
+        return jsonify({"error": "symbol obrigatório"}), 400
+    expiry = request.args.get("expiry") or None
+    chain = dict(markets_data.option_chain(base, expiry))
+    return jsonify(options_analytics.add_greeks(chain))
 
 
 @terminal_bp.get("/options/surface")
 def options_surface():
-    try:
-        from engine import options_analytics
-        base = (request.args.get("symbol") or "").strip()
-        if not base:
-            return jsonify({"error": "symbol obrigatório"}), 400
-        return jsonify(options_analytics.vol_surface(base))
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from engine import options_analytics
+    base = (request.args.get("symbol") or "").strip()
+    if not base:
+        return jsonify({"error": "symbol obrigatório"}), 400
+    return jsonify(options_analytics.vol_surface(base))
 
 
 @terminal_bp.post("/options/strategy")
@@ -300,58 +279,43 @@ def options_strategy():
 # GT — análise técnica multi-ativo
 @terminal_bp.post("/chart")
 def chart():
-    try:
-        from providers import technical_data
-        body = request.get_json(force=True) or {}
-        symbols = body.get("symbols") or []
-        if not symbols:
-            return jsonify({"error": "symbols obrigatório"}), 400
-        interval = body.get("interval") or "1d"
-        bars = int(body.get("bars") or 500)
-        if body.get("mode") == "compare":
-            return jsonify(technical_data.compare_chart(
-                symbols, interval, bars, int(body.get("corr_window") or 30)))
-        return jsonify(technical_data.single_chart(
-            symbols[0], interval, bars, body.get("studies") or []))
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import technical_data
+    body = request.get_json(force=True) or {}
+    symbols = body.get("symbols") or []
+    if not symbols:
+        return jsonify({"error": "symbols obrigatório"}), 400
+    interval = body.get("interval") or "1d"
+    bars = int(body.get("bars") or 500)
+    if body.get("mode") == "compare":
+        return jsonify(technical_data.compare_chart(
+            symbols, interval, bars, int(body.get("corr_window") or 30)))
+    return jsonify(technical_data.single_chart(
+        symbols[0], interval, bars, body.get("studies") or []))
 
 
 # ALTD — dados alternativos
 @terminal_bp.get("/alt/indicators")
 def alt_indicators():
-    try:
-        from providers import altdata
-        return jsonify(altdata.indicators())
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import altdata
+    return jsonify(altdata.indicators())
 
 
 @terminal_bp.get("/alt/supplychain")
 def alt_supplychain():
-    try:
-        from providers import altdata
-        return jsonify(altdata.supply_chain())
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import altdata
+    return jsonify(altdata.supply_chain())
 
 
 @terminal_bp.get("/alt/traffic")
 def alt_traffic():
-    try:
-        from providers import altdata
-        return jsonify(altdata.traffic())
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import altdata
+    return jsonify(altdata.traffic())
 
 
 @terminal_bp.get("/alt/climate")
 def alt_climate():
-    try:
-        from providers import altdata
-        return jsonify(altdata.climate())
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import altdata
+    return jsonify(altdata.climate())
 
 
 @terminal_bp.get("/alt/sectors")
@@ -367,20 +331,14 @@ def alt_sectors():
 
 @terminal_bp.get("/alt/cryptomicro")
 def alt_cryptomicro():
-    try:
-        from providers import altdata
-        return jsonify(altdata.crypto_micro())
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import altdata
+    return jsonify(altdata.crypto_micro())
 
 
 @terminal_bp.get("/alt/onchain")
 def alt_onchain():
-    try:
-        from providers import onchain_data
-        return jsonify(onchain_data.overview())
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import onchain_data
+    return jsonify(onchain_data.overview())
 
 
 @terminal_bp.get("/alt/onchain/coin")
@@ -397,11 +355,8 @@ def alt_onchain_coin():
 # OMS/EMS — execução de ordens
 @terminal_bp.get("/oms/accounts")
 def oms_accounts():
-    try:
-        from engine import oms
-        return jsonify(oms.accounts())
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from engine import oms
+    return jsonify(oms.accounts())
 
 
 @terminal_bp.post("/oms/pretrade")
@@ -439,51 +394,36 @@ def oms_cancel(order_id):
 
 @terminal_bp.get("/oms/blotter")
 def oms_blotter():
-    try:
-        from engine import oms
-        return jsonify(oms.blotter(request.args.get("account", "paper")))
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from engine import oms
+    return jsonify(oms.blotter(request.args.get("account", "paper")))
 
 
 @terminal_bp.get("/oms/tca")
 def oms_tca():
-    try:
-        from engine import oms
-        return jsonify(oms.tca(request.args.get("account", "paper")))
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from engine import oms
+    return jsonify(oms.tca(request.args.get("account", "paper")))
 
 
 @terminal_bp.post("/oms/reset")
 def oms_reset():
-    try:
-        body = request.get_json(force=True) or {}
-        if not body.get("confirm"):
-            return jsonify({"error": "reset da conta paper exige confirm=true"}), 400
-        from engine import oms
-        return jsonify(oms.reset_paper())
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    body = request.get_json(force=True) or {}
+    if not body.get("confirm"):
+        return jsonify({"error": "reset da conta paper exige confirm=true"}), 400
+    from engine import oms
+    return jsonify(oms.reset_paper())
 
 
 # CDTY — painel de commodities
 @terminal_bp.get("/cdty/overview")
 def cdty_overview():
-    try:
-        from providers import commodities_data
-        return jsonify(commodities_data.overview())
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import commodities_data
+    return jsonify(commodities_data.overview())
 
 
 @terminal_bp.get("/cdty/curves")
 def cdty_curves():
-    try:
-        from providers import commodities_data
-        return jsonify({"curves": commodities_data.curves_meta()})
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import commodities_data
+    return jsonify({"curves": commodities_data.curves_meta()})
 
 
 @terminal_bp.get("/cdty/curve")
@@ -500,78 +440,57 @@ def cdty_curve():
 
 @terminal_bp.get("/cdty/weather")
 def cdty_weather():
-    try:
-        from providers import commodities_data
-        return jsonify(commodities_data.weather())
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import commodities_data
+    return jsonify(commodities_data.weather())
 
 
 @terminal_bp.get("/cdty/shipping")
 def cdty_shipping():
-    try:
-        from providers import commodities_data
-        return jsonify(commodities_data.shipping())
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import commodities_data
+    return jsonify(commodities_data.shipping())
 
 
 @terminal_bp.get("/cdty/inventories")
 def cdty_inventories():
-    try:
-        from providers import commodities_data
-        return jsonify(commodities_data.inventories())
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import commodities_data
+    return jsonify(commodities_data.inventories())
 
 
 @terminal_bp.get("/book")
 def book():
-    try:
-        from providers import markets_data
-        base = (request.args.get("symbol") or "").strip()
-        if not base:
-            return jsonify({"error": "symbol obrigatório"}), 400
-        return jsonify(markets_data.order_book(
-            base,
-            (request.args.get("exchange") or "bybit").lower(),
-            (request.args.get("market") or "crypto").lower(),
-        ))
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import markets_data
+    base = (request.args.get("symbol") or "").strip()
+    if not base:
+        return jsonify({"error": "symbol obrigatório"}), 400
+    return jsonify(markets_data.order_book(
+        base,
+        (request.args.get("exchange") or "bybit").lower(),
+        (request.args.get("market") or "crypto").lower(),
+    ))
 
 
 # EA — análise completa de empresa (estilo Bloomberg FA)
 @terminal_bp.get("/ea")
 def ea():
-    try:
-        from engine import equity_analysis
-        base = (request.args.get("symbol") or "").strip()
-        if not base:
-            return jsonify({"error": "symbol obrigatório"}), 400
-        return jsonify(equity_analysis.analyze(base))
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from engine import equity_analysis
+    base = (request.args.get("symbol") or "").strip()
+    if not base:
+        return jsonify({"error": "symbol obrigatório"}), 400
+    return jsonify(equity_analysis.analyze(base))
 
 
 # EQS — screening fundamentalista (Yahoo screener server-side)
 @terminal_bp.get("/eqs/meta")
 def eqs_meta():
-    try:
-        from providers import eqs_data
-        return jsonify(eqs_data.meta())
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import eqs_data
+    return jsonify(eqs_data.meta())
 
 
 @terminal_bp.post("/eqs/equity")
 def eqs_equity():
-    try:
-        from providers import eqs_data
-        filters = request.get_json(force=True) or {}
-        return jsonify(eqs_data.run_equity_screen(filters))
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    from providers import eqs_data
+    filters = request.get_json(force=True) or {}
+    return jsonify(eqs_data.run_equity_screen(filters))
 
 
 @terminal_bp.get("/eqs/funds")
@@ -868,19 +787,16 @@ def news():
         items.sort(key=lambda x: x["ts"] or 0, reverse=True)
         return {"items": items, "failed_sources": failed}
 
-    try:
-        data = _cached(("news",), 600, fetch)
-        items = data["items"]
-        if cat in ("crypto", "markets", "commodities"):
-            items = [it for it in items if it.get("cat") == cat]
-        q = (request.args.get("q") or "").strip().lower()
-        if q:
-            terms = [w for w in q.split("|") if w]
-            items = [it for it in items
-                     if any(w in it["title"].lower() for w in terms)]
-        return jsonify({"items": items[:100], "failed_sources": data["failed_sources"]})
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    data = _cached(("news",), 600, fetch)
+    items = data["items"]
+    if cat in ("crypto", "markets", "commodities"):
+        items = [it for it in items if it.get("cat") == cat]
+    q = (request.args.get("q") or "").strip().lower()
+    if q:
+        terms = [w for w in q.split("|") if w]
+        items = [it for it in items
+                 if any(w in it["title"].lower() for w in terms)]
+    return jsonify({"items": items[:100], "failed_sources": data["failed_sources"]})
 
 @terminal_bp.get("/seasonality")
 def seasonality():

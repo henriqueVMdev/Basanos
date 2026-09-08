@@ -2,26 +2,30 @@
 Iniciar: python server.py
 """
 
+import importlib.util
 import io
+import itertools
 import json
 import math
 import threading
-import importlib.util
+import time
+import traceback
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from scipy import stats as scipy_stats
+from werkzeug.exceptions import HTTPException
 
-from loader import load_csv
-from config import DATA_DIR, TOP_N, COLUMN_DISPLAY
 from charts.scatter import (
     plot_return_vs_drawdown,
     plot_return_vs_sharpe,
     plot_return_vs_trades,
 )
-import itertools
+from config import COLUMN_DISPLAY, DATA_DIR, TOP_N
+from loader import load_csv
 
 # Diretório com os módulos de estratégia
 STRATEGIES_DIR = Path(__file__).parent / "strategies"
@@ -46,6 +50,19 @@ def _load_strategy(strategy_file: str):
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173"])
+
+
+@app.errorhandler(Exception)
+def _json_error(e):
+    """Erro não tratado vira JSON — a SPA lê response.data.error.
+
+    Mensagem truncada (upstream às vezes devolve uma página HTML inteira);
+    o traceback completo vai para o log do servidor, não para a resposta.
+    """
+    if isinstance(e, HTTPException):
+        return jsonify({"error": e.description}), e.code
+    traceback.print_exc()
+    return jsonify({"error": str(e)[:500]}), 500
 
 
 # Candles a paginar por timeframe no caminho CCXT (~1 ano de 15m, como na
@@ -74,10 +91,9 @@ def _download_data_safe(symbol: str, interval: str, exchange: str | None = None)
     if exchange:
         from providers.market_data import SUPPORTED_EXCHANGES, fetch_ohlcv
         if exchange.lower() in SUPPORTED_EXCHANGES:
-            import time as _time
             key = (symbol.upper(), interval, exchange.lower())
             hit = _OHLCV_CACHE.get(key)
-            if hit and _time.time() - hit[0] < _OHLCV_TTL_S:
+            if hit and time.time() - hit[0] < _OHLCV_TTL_S:
                 return hit[1].copy()
             # ~1 ano p/ intraday curto (35k de 15m = setup da pesquisa do
             # RELATORIO_prop_challenge); a exchange devolve o que tiver.
@@ -88,7 +104,7 @@ def _download_data_safe(symbol: str, interval: str, exchange: str | None = None)
                 if hit is not None:      # cache vencido > erro (ex.: rate limit)
                     return hit[1].copy()
                 raise
-            _OHLCV_CACHE[key] = (_time.time(), df)
+            _OHLCV_CACHE[key] = (time.time(), df)
             return df.copy()
         raise ValueError(
             f"exchange '{exchange}' não suportada. "
@@ -156,8 +172,9 @@ def _download_data_safe(symbol: str, interval: str, exchange: str | None = None)
 
     return df.sort_index()
 
-# Cache simples para correlações (evita re-download do yfinance)
+# Cache de correlações (evita re-download do yfinance)
 _corr_cache: dict = {}
+_CORR_TTL_S = 1800
 
 # Lista de ativos predefinidos (copiada de pages/backtest_live.py)
 ASSETS = {
@@ -541,13 +558,10 @@ def _map_backtest_params(row: dict) -> dict:
 @app.route("/api/files", methods=["GET"])
 def api_files():
     """Lista arquivos CSV na pasta data/."""
-    try:
-        if not DATA_DIR.exists():
-            return jsonify({"files": []})
-        files = sorted([f.name for f in DATA_DIR.glob("*.csv")])
-        return jsonify({"files": files})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    if not DATA_DIR.exists():
+        return jsonify({"files": []})
+    files = sorted([f.name for f in DATA_DIR.glob("*.csv")])
+    return jsonify({"files": files})
 
 
 @app.route("/api/load", methods=["POST"])
@@ -633,37 +647,34 @@ def api_filter():
     Reaplicar filtros sobre os dados brutos (enviados pelo frontend).
     Backend stateless: frontend envia rawRows a cada filtragem.
     """
-    try:
-        body = request.get_json(force=True) or {}
-        rows = body.get("rows", [])
-        filters = body.get("filters", {})
+    body = request.get_json(force=True) or {}
+    rows = body.get("rows", [])
+    filters = body.get("filters", {})
 
-        if not rows:
-            return jsonify({"error": "rows obrigatório"}), 400
+    if not rows:
+        return jsonify({"error": "rows obrigatório"}), 400
 
-        df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
 
-        # Garante tipos numéricos
-        from config import NUMERIC_COLUMNS
-        for col in NUMERIC_COLUMNS:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-        # periodo pode ser numérico para best_params
-        if "periodo" in df.columns:
-            df["periodo"] = pd.to_numeric(df["periodo"], errors="coerce")
+    # Garante tipos numéricos
+    from config import NUMERIC_COLUMNS
+    for col in NUMERIC_COLUMNS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    # periodo pode ser numérico para best_params
+    if "periodo" in df.columns:
+        df["periodo"] = pd.to_numeric(df["periodo"], errors="coerce")
 
-        filtered = _apply_filters(df, filters)
+    filtered = _apply_filters(df, filters)
 
-        return jsonify({
-            "filtered_rows": len(filtered),
-            "summary": _build_summary(filtered),
-            "charts": _build_charts(filtered),
-            "table": _build_table(filtered, filters),
-            "best_params": _build_best_params(filtered, filters.get("top_n", TOP_N)),
-        })
+    return jsonify({
+        "filtered_rows": len(filtered),
+        "summary": _build_summary(filtered),
+        "charts": _build_charts(filtered),
+        "table": _build_table(filtered, filters),
+        "best_params": _build_best_params(filtered, filters.get("top_n", TOP_N)),
+    })
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/filter-chart", methods=["POST"])
@@ -672,46 +683,43 @@ def api_filter_chart():
     Filtra os dados brutos e regenera um unico grafico scatter.
     Recebe: rows, chart_type, chart_filters
     """
-    try:
-        body = request.get_json(force=True) or {}
-        rows = body.get("rows", [])
-        chart_type = body.get("chart_type", "")
-        chart_filters = body.get("chart_filters", {})
+    body = request.get_json(force=True) or {}
+    rows = body.get("rows", [])
+    chart_type = body.get("chart_type", "")
+    chart_filters = body.get("chart_filters", {})
 
-        if not rows:
-            return jsonify({"error": "rows obrigatorio"}), 400
+    if not rows:
+        return jsonify({"error": "rows obrigatorio"}), 400
 
-        df = pd.DataFrame(rows)
-        from config import NUMERIC_COLUMNS
-        for col in NUMERIC_COLUMNS:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = pd.DataFrame(rows)
+    from config import NUMERIC_COLUMNS
+    for col in NUMERIC_COLUMNS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        # Aplica filtros visuais do grafico
-        if "return_min" in chart_filters and chart_filters["return_min"] is not None:
-            df = df[df["return_pct"] >= chart_filters["return_min"]]
-        if "dd_max" in chart_filters and chart_filters["dd_max"] is not None:
-            df = df[df["max_dd_pct"] >= chart_filters["dd_max"]]
-        if "sharpe_min" in chart_filters and chart_filters["sharpe_min"] is not None:
-            df = df[df["sharpe"] >= chart_filters["sharpe_min"]]
-        if "trades_min" in chart_filters and chart_filters["trades_min"] is not None:
-            df = df[df["trades"] >= chart_filters["trades_min"]]
+    # Aplica filtros visuais do grafico
+    if "return_min" in chart_filters and chart_filters["return_min"] is not None:
+        df = df[df["return_pct"] >= chart_filters["return_min"]]
+    if "dd_max" in chart_filters and chart_filters["dd_max"] is not None:
+        df = df[df["max_dd_pct"] >= chart_filters["dd_max"]]
+    if "sharpe_min" in chart_filters and chart_filters["sharpe_min"] is not None:
+        df = df[df["sharpe"] >= chart_filters["sharpe_min"]]
+    if "trades_min" in chart_filters and chart_filters["trades_min"] is not None:
+        df = df[df["trades"] >= chart_filters["trades_min"]]
 
-        chart_json = None
-        if chart_type == "return_vs_drawdown" and all(c in df.columns for c in ["max_dd_pct", "return_pct", "score"]):
-            chart_json = json.loads(plot_return_vs_drawdown(df).to_json())  # type: ignore[arg-type]
-        elif chart_type == "return_vs_sharpe" and all(c in df.columns for c in ["sharpe", "return_pct", "win_rate_pct"]):
-            chart_json = json.loads(plot_return_vs_sharpe(df).to_json())  # type: ignore[arg-type]
-        elif chart_type == "return_vs_trades" and all(c in df.columns for c in ["trades", "return_pct", "profit_factor"]):
-            chart_json = json.loads(plot_return_vs_trades(df).to_json())  # type: ignore[arg-type]
+    chart_json = None
+    if chart_type == "return_vs_drawdown" and all(c in df.columns for c in ["max_dd_pct", "return_pct", "score"]):
+        chart_json = json.loads(plot_return_vs_drawdown(df).to_json())  # type: ignore[arg-type]
+    elif chart_type == "return_vs_sharpe" and all(c in df.columns for c in ["sharpe", "return_pct", "win_rate_pct"]):
+        chart_json = json.loads(plot_return_vs_sharpe(df).to_json())  # type: ignore[arg-type]
+    elif chart_type == "return_vs_trades" and all(c in df.columns for c in ["trades", "return_pct", "profit_factor"]):
+        chart_json = json.loads(plot_return_vs_trades(df).to_json())  # type: ignore[arg-type]
 
-        return jsonify({
-            "chart": chart_json,
-            "count": len(df),
-        })
+    return jsonify({
+        "chart": chart_json,
+        "count": len(df),
+    })
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/strategy", methods=["POST"])
@@ -719,41 +727,38 @@ def api_strategy():
     """
     Retorna detalhes de uma estratégia por rank + parâmetros mapeados para backtest.
     """
-    try:
-        body = request.get_json(force=True) or {}
-        rank = body.get("rank")
-        rows = body.get("rows", [])
+    body = request.get_json(force=True) or {}
+    rank = body.get("rank")
+    rows = body.get("rows", [])
 
-        if not rows:
-            return jsonify({"error": "rows obrigatório"}), 400
+    if not rows:
+        return jsonify({"error": "rows obrigatório"}), 400
 
-        df = pd.DataFrame(rows)
-        from config import NUMERIC_COLUMNS
-        for col in NUMERIC_COLUMNS:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = pd.DataFrame(rows)
+    from config import NUMERIC_COLUMNS
+    for col in NUMERIC_COLUMNS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        if rank is not None and "rank" in df.columns:
-            match = df[df["rank"] == rank]
-            if match.empty:
-                # Tenta por índice como fallback
-                try:
-                    row_dict = df.iloc[int(rank)].to_dict()
-                except Exception:
-                    return jsonify({"error": f"rank {rank} não encontrado"}), 404
-            else:
-                row_dict = match.iloc[0].to_dict()
+    if rank is not None and "rank" in df.columns:
+        match = df[df["rank"] == rank]
+        if match.empty:
+            # Tenta por índice como fallback
+            try:
+                row_dict = df.iloc[int(rank)].to_dict()
+            except Exception:
+                return jsonify({"error": f"rank {rank} não encontrado"}), 404
         else:
-            return jsonify({"error": "rank obrigatório"}), 400
+            row_dict = match.iloc[0].to_dict()
+    else:
+        return jsonify({"error": "rank obrigatório"}), 400
 
-        # Limpa NaN
-        detail = {k: (_safe(v) if isinstance(v, float) else v) for k, v in row_dict.items()}
-        backtest_params = _map_backtest_params(row_dict)
+    # Limpa NaN
+    detail = {k: (_safe(v) if isinstance(v, float) else v) for k, v in row_dict.items()}
+    backtest_params = _map_backtest_params(row_dict)
 
-        return jsonify({"detail": detail, "backtest_params": backtest_params})
+    return jsonify({"detail": detail, "backtest_params": backtest_params})
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/backtest/assets", methods=["GET"])
@@ -793,7 +798,6 @@ def api_backtest_strategies():
                     "automatable": callable(getattr(module, "signal", None)),
                 })
             except Exception as e:
-                import traceback
                 strategies.append({
                     "file": path.stem,
                     "name": path.stem,
@@ -813,65 +817,61 @@ def api_backtest_run():
               "symbol": "BTC-USD", "interval": "1d", "config": {...} }
     - multipart/form-data: file CSV + config (JSON) + strategy_file (form field)
     """
-    try:
-        df_data = None
-        cfg_dict = {}
-        symbol_label = ""
-        interval_label = ""
-        strategy_file = "depaula"  # padrão para backward compat
+    df_data = None
+    cfg_dict = {}
+    symbol_label = ""
+    interval_label = ""
+    strategy_file = "depaula"  # padrão para backward compat
 
-        if "file" in request.files:
-            file_obj = request.files["file"]
-            symbol_label = file_obj.filename or "CSV"
-            interval_label = "-"
-            cfg_raw = request.form.get("config", "{}")
-            cfg_dict = json.loads(cfg_raw)
-            strategy_file = request.form.get("strategy_file", "depaula") or "depaula"
-            # Lê CSV de preços (colunas: Date,Open,High,Low,Close)
-            raw = file_obj.read()
-            for enc in ["utf-8-sig", "utf-8", "latin-1", "cp1252"]:
-                try:
-                    text = raw.decode(enc)
-                    df_data = pd.read_csv(
-                        io.StringIO(text),
-                        parse_dates=["Date"],
-                        index_col="Date"
-                    ).sort_index()
-                    break
-                except Exception:
-                    continue
-            if df_data is None:
-                return jsonify({"error": "Não foi possível ler o CSV de preços"}), 400
-        else:
-            body = request.get_json(force=True) or {}
-            cfg_dict = body.get("config", {})
-            strategy_file = body.get("strategy_file", "depaula") or "depaula"
-            symbol_label = body.get("symbol_label", "")
-            interval_label = body.get("interval", "1d")
-            symbol = body.get("symbol", "")
-            exchange = body.get("exchange")
+    if "file" in request.files:
+        file_obj = request.files["file"]
+        symbol_label = file_obj.filename or "CSV"
+        interval_label = "-"
+        cfg_raw = request.form.get("config", "{}")
+        cfg_dict = json.loads(cfg_raw)
+        strategy_file = request.form.get("strategy_file", "depaula") or "depaula"
+        # Lê CSV de preços (colunas: Date,Open,High,Low,Close)
+        raw = file_obj.read()
+        for enc in ["utf-8-sig", "utf-8", "latin-1", "cp1252"]:
+            try:
+                text = raw.decode(enc)
+                df_data = pd.read_csv(
+                    io.StringIO(text),
+                    parse_dates=["Date"],
+                    index_col="Date"
+                ).sort_index()
+                break
+            except Exception:
+                continue
+        if df_data is None:
+            return jsonify({"error": "Não foi possível ler o CSV de preços"}), 400
+    else:
+        body = request.get_json(force=True) or {}
+        cfg_dict = body.get("config", {})
+        strategy_file = body.get("strategy_file", "depaula") or "depaula"
+        symbol_label = body.get("symbol_label", "")
+        interval_label = body.get("interval", "1d")
+        symbol = body.get("symbol", "")
+        exchange = body.get("exchange")
 
-            if not symbol:
-                return jsonify({"error": "symbol obrigatório"}), 400
+        if not symbol:
+            return jsonify({"error": "symbol obrigatório"}), 400
 
-            df_data = _download_data_safe(symbol, interval_label, exchange)
-            if symbol_label == "":
-                symbol_label = symbol
+        df_data = _download_data_safe(symbol, interval_label, exchange)
+        if symbol_label == "":
+            symbol_label = symbol
 
-        # Carrega o módulo de estratégia e executa
-        module = _load_strategy(strategy_file)
-        result_dict = module.run(df_data.copy(), cfg_dict)
+    # Carrega o módulo de estratégia e executa
+    module = _load_strategy(strategy_file)
+    result_dict = module.run(df_data.copy(), cfg_dict)
 
-        return jsonify({
-            "symbol": symbol_label,
-            "interval": interval_label,
-            "strategy": strategy_file,
-            **result_dict,
-        })
+    return jsonify({
+        "symbol": symbol_label,
+        "interval": interval_label,
+        "strategy": strategy_file,
+        **result_dict,
+    })
 
-    except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 @app.route("/api/backtest/chart-data", methods=["POST"])
@@ -888,101 +888,97 @@ def api_backtest_chart_data():
     Body: igual ao /api/backtest/run + cost_exchange/cost_scenario/use_funding/
     cost_symbol (opcionais; default = exchange dos dados ou 'binance').
     """
-    try:
-        body = request.get_json(force=True) or {}
-        cfg_dict = dict(body.get("config", {}))
-        strategy_file = body.get("strategy_file", "depaula") or "depaula"
-        interval_label = body.get("interval", "1d")
-        symbol = body.get("symbol", "")
-        exchange = body.get("exchange")
+    body = request.get_json(force=True) or {}
+    cfg_dict = dict(body.get("config", {}))
+    strategy_file = body.get("strategy_file", "depaula") or "depaula"
+    interval_label = body.get("interval", "1d")
+    symbol = body.get("symbol", "")
+    exchange = body.get("exchange")
 
-        if not symbol:
-            return jsonify({"error": "symbol obrigatório"}), 400
+    if not symbol:
+        return jsonify({"error": "symbol obrigatório"}), 400
 
-        df_data = _download_data_safe(symbol, interval_label, exchange)
-        module = _load_strategy(strategy_file)
-        result = module.run(df_data.copy(), {**cfg_dict, "_charts": True})
+    df_data = _download_data_safe(symbol, interval_label, exchange)
+    module = _load_strategy(strategy_file)
+    result = module.run(df_data.copy(), {**cfg_dict, "_charts": True})
 
-        chart = result.get("chart") or {}
-        raw_trades = result.get("trades", [])
+    chart = result.get("chart") or {}
+    raw_trades = result.get("trades", [])
 
-        # Marcadores de trade (long/short) com data/preço de entrada e saída.
-        markers = []
-        for t in raw_trades:
-            if t.get("entry_ts") and t.get("entry_price") is not None:
-                markers.append({
-                    "entry_ts":    t.get("entry_ts"),
-                    "exit_ts":     t.get("exit_ts"),
-                    "entry_price": t.get("entry_price"),
-                    "exit_price":  t.get("exit_price"),
-                    "direction":   t.get("direction", 1),
-                    "pnl_pct":     t.get("pnl_pct"),
-                    "stop_price":   t.get("stop_price"),
-                    "target_price": t.get("target_price"),
-                })
+    # Marcadores de trade (long/short) com data/preço de entrada e saída.
+    markers = []
+    for t in raw_trades:
+        if t.get("entry_ts") and t.get("entry_price") is not None:
+            markers.append({
+                "entry_ts":    t.get("entry_ts"),
+                "exit_ts":     t.get("exit_ts"),
+                "entry_price": t.get("entry_price"),
+                "exit_price":  t.get("exit_price"),
+                "direction":   t.get("direction", 1),
+                "pnl_pct":     t.get("pnl_pct"),
+                "stop_price":   t.get("stop_price"),
+                "target_price": t.get("target_price"),
+            })
 
-        # Contexto de custos: força apply_costs p/ sempre montar funding + líquido.
-        cost_ctx, cost_warnings = _build_wfa_cost_ctx(
-            df_data, {**body, "apply_costs": body.get("apply_costs", True)}, cfg_dict
-        )
+    # Contexto de custos: força apply_costs p/ sempre montar funding + líquido.
+    cost_ctx, cost_warnings = _build_wfa_cost_ctx(
+        df_data, {**body, "apply_costs": body.get("apply_costs", True)}, cfg_dict
+    )
 
-        # Curva de equity bruta (por barra) + líquida (bruta − custo acumulado).
-        eq_dates = result.get("equity_curve", {}).get("dates", [])
-        eq_gross = result.get("equity_curve", {}).get("values", [])
-        eq_net   = None
-        funding  = {"dates": [], "rates": []}
+    # Curva de equity bruta (por barra) + líquida (bruta − custo acumulado).
+    eq_dates = result.get("equity_curve", {}).get("dates", [])
+    eq_gross = result.get("equity_curve", {}).get("values", [])
+    eq_net   = None
+    funding  = {"dates": [], "rates": []}
 
-        if cost_ctx is not None:
-            from costs import trades_from_platform
-            calc = cost_ctx["calc"]
-            funding_events = cost_ctx["funding_events"]
+    if cost_ctx is not None:
+        from costs import trades_from_platform
+        calc = cost_ctx["calc"]
+        funding_events = cost_ctx["funding_events"]
 
-            # Custo absoluto por trade (positivo), associado ao timestamp de saída.
-            costs_by_exit = []
-            for ct in trades_from_platform(raw_trades):
-                bd = calc.apply_trade(ct, funding_events)
-                costs_by_exit.append((ct.exit_time, float(bd.pnl_bruto - bd.pnl_liquido)))
-            costs_by_exit.sort(key=lambda x: x[0])
+        # Custo absoluto por trade (positivo), associado ao timestamp de saída.
+        costs_by_exit = []
+        for ct in trades_from_platform(raw_trades):
+            bd = calc.apply_trade(ct, funding_events)
+            costs_by_exit.append((ct.exit_time, float(bd.pnl_bruto - bd.pnl_liquido)))
+        costs_by_exit.sort(key=lambda x: x[0])
 
-            # Alinha custo acumulado às barras pelo timestamp completo do chart.
-            bar_ts = []
-            for d in (chart.get("dates") or []):
-                try:
-                    bar_ts.append(int(pd.Timestamp(d).value // 1_000_000))
-                except Exception:
-                    bar_ts.append(None)
+        # Alinha custo acumulado às barras pelo timestamp completo do chart.
+        bar_ts = []
+        for d in (chart.get("dates") or []):
+            try:
+                bar_ts.append(int(pd.Timestamp(d).value // 1_000_000))
+            except Exception:
+                bar_ts.append(None)
 
-            if bar_ts and len(bar_ts) == len(eq_gross):
-                eq_net = []
-                ci, running = 0, 0.0
-                for i, bts in enumerate(bar_ts):
-                    while ci < len(costs_by_exit) and bts is not None and costs_by_exit[ci][0] <= bts:
-                        running += costs_by_exit[ci][1]
-                        ci += 1
-                    g = eq_gross[i]
-                    eq_net.append(_safe(g - running) if g is not None else None)
+        if bar_ts and len(bar_ts) == len(eq_gross):
+            eq_net = []
+            ci, running = 0, 0.0
+            for i, bts in enumerate(bar_ts):
+                while ci < len(costs_by_exit) and bts is not None and costs_by_exit[ci][0] <= bts:
+                    running += costs_by_exit[ci][1]
+                    ci += 1
+                g = eq_gross[i]
+                eq_net.append(_safe(g - running) if g is not None else None)
 
-            funding = {
-                "dates": [pd.Timestamp(ev.timestamp, unit="ms").isoformat() for ev in funding_events],
-                "rates": [float(ev.rate) for ev in funding_events],
-            }
+        funding = {
+            "dates": [pd.Timestamp(ev.timestamp, unit="ms").isoformat() for ev in funding_events],
+            "rates": [float(ev.rate) for ev in funding_events],
+        }
 
-        return jsonify({
-            "symbol":     body.get("symbol_label") or symbol,
-            "interval":   interval_label,
-            "candles":    {"dates": chart.get("dates", []), **(chart.get("ohlc") or {})},
-            "indicators": chart.get("indicators", {}),
-            "trades":     markers,
-            "equity":     {"dates": eq_dates, "gross": eq_gross, "net": eq_net},
-            "funding":    funding,
-            "cost_exchange": cost_ctx["exchange"] if cost_ctx else None,
-            "cost_scenario": cost_ctx["scenario"] if cost_ctx else None,
-            "cost_warnings": cost_warnings,
-        })
+    return jsonify({
+        "symbol":     body.get("symbol_label") or symbol,
+        "interval":   interval_label,
+        "candles":    {"dates": chart.get("dates", []), **(chart.get("ohlc") or {})},
+        "indicators": chart.get("indicators", {}),
+        "trades":     markers,
+        "equity":     {"dates": eq_dates, "gross": eq_gross, "net": eq_net},
+        "funding":    funding,
+        "cost_exchange": cost_ctx["exchange"] if cost_ctx else None,
+        "cost_scenario": cost_ctx["scenario"] if cost_ctx else None,
+        "cost_warnings": cost_warnings,
+    })
 
-    except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 @app.route("/api/backtest/costs", methods=["POST"])
@@ -1010,60 +1006,56 @@ def api_backtest_costs():
     except Exception as e:
         return jsonify({"error": f"Módulo de custos indisponível: {e}"}), 500
 
-    try:
-        body = request.get_json(force=True) or {}
-        raw_trades = body.get("trades", [])
-        symbol = body.get("symbol") or "BTC/USDT:USDT"
-        exchanges = tuple(body.get("exchanges") or ("binance", "bybit", "okx"))
-        scenarios = body.get("scenarios") or ["realista", "pessimista"]
-        initial_capital = float(body.get("initial_capital", 1000.0))
-        use_funding = bool(body.get("use_funding", True))
-        fees_override = body.get("fees") or {}
+    body = request.get_json(force=True) or {}
+    raw_trades = body.get("trades", [])
+    symbol = body.get("symbol") or "BTC/USDT:USDT"
+    exchanges = tuple(body.get("exchanges") or ("binance", "bybit", "okx"))
+    scenarios = body.get("scenarios") or ["realista", "pessimista"]
+    initial_capital = float(body.get("initial_capital", 1000.0))
+    use_funding = bool(body.get("use_funding", True))
+    fees_override = body.get("fees") or {}
 
-        trades = trades_from_platform(raw_trades)
-        if len(trades) < 1:
-            return jsonify({"error": "Nenhum trade com qty/timestamp para custear. "
-                                     "Rode o backtest com sizing (qty/alavancagem) definido."}), 400
+    trades = trades_from_platform(raw_trades)
+    if len(trades) < 1:
+        return jsonify({"error": "Nenhum trade com qty/timestamp para custear. "
+                                 "Rode o backtest com sizing (qty/alavancagem) definido."}), 400
 
-        # Override de fees por tier (mantém o default se não informado)
-        for ex, f in fees_override.items():
-            if ex in DEFAULT_FEES and "maker" in f and "taker" in f:
-                DEFAULT_FEES[ex] = _Fees(maker=_Dec(str(f["maker"])),
-                                         taker=_Dec(str(f["taker"])))
+    # Override de fees por tier (mantém o default se não informado)
+    for ex, f in fees_override.items():
+        if ex in DEFAULT_FEES and "maker" in f and "taker" in f:
+            DEFAULT_FEES[ex] = _Fees(maker=_Dec(str(f["maker"])),
+                                     taker=_Dec(str(f["taker"])))
 
-        warnings = []
+    warnings = []
 
-        def provider(exchange, sym, since_ms, until_ms):
-            if not use_funding:
-                return []
-            try:
-                return _get_funding(exchange, sym, since_ms, until_ms)
-            except Exception as ex:
-                warnings.append(f"{exchange}: funding indisponível ({ex}). Usando só fees.")
-                return []
+    def provider(exchange, sym, since_ms, until_ms):
+        if not use_funding:
+            return []
+        try:
+            return _get_funding(exchange, sym, since_ms, until_ms)
+        except Exception as ex:
+            warnings.append(f"{exchange}: funding indisponível ({ex}). Usando só fees.")
+            return []
 
-        frames = []
-        for sc in scenarios:
-            df_sc = compare_exchanges({body.get("strategy_name", "Estratégia"): trades},
-                                      symbol, exchanges=exchanges, scenario=sc,
-                                      initial_capital=initial_capital,
-                                      funding_provider=provider)
-            frames.append(df_sc)
+    frames = []
+    for sc in scenarios:
+        df_sc = compare_exchanges({body.get("strategy_name", "Estratégia"): trades},
+                                  symbol, exchanges=exchanges, scenario=sc,
+                                  initial_capital=initial_capital,
+                                  funding_provider=provider)
+        frames.append(df_sc)
 
-        full = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-        rows = [{k: _safe(v) if isinstance(v, (int, float)) else v for k, v in r.items()}
-                for r in full.to_dict(orient="records")]
+    full = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    rows = [{k: _safe(v) if isinstance(v, (int, float)) else v for k, v in r.items()}
+            for r in full.to_dict(orient="records")]
 
-        return jsonify({
-            "symbol": symbol,
-            "rows": rows,
-            "warnings": warnings,
-            "n_trades": len(trades),
-        })
+    return jsonify({
+        "symbol": symbol,
+        "rows": rows,
+        "warnings": warnings,
+        "n_trades": len(trades),
+    })
 
-    except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 def _extract_param_specs(module):
@@ -1355,203 +1347,199 @@ def api_backtest_wfa():
     Walk-Forward Analysis.
     Input JSON: { symbol, interval, strategy_file, config, n_windows, is_pct }
     """
-    try:
-        body = request.get_json(force=True) or {}
-        symbol        = body.get("symbol", "")
-        interval      = body.get("interval", "1d")
-        strategy_file = body.get("strategy_file", "depaula") or "depaula"
-        cfg_dict      = body.get("config", {})
-        n_windows            = int(max(3, min(30, body.get("n_windows", 10))))
-        is_pct               = float(max(0.5, min(0.85, body.get("is_pct", 0.70))))
-        optimize_is_samples  = int(max(0, min(200, body.get("optimize_is_samples", 0))))
+    body = request.get_json(force=True) or {}
+    symbol        = body.get("symbol", "")
+    interval      = body.get("interval", "1d")
+    strategy_file = body.get("strategy_file", "depaula") or "depaula"
+    cfg_dict      = body.get("config", {})
+    n_windows            = int(max(3, min(30, body.get("n_windows", 10))))
+    is_pct               = float(max(0.5, min(0.85, body.get("is_pct", 0.70))))
+    optimize_is_samples  = int(max(0, min(200, body.get("optimize_is_samples", 0))))
 
-        if not symbol:
-            return jsonify({"error": "symbol obrigatorio para WFA"}), 400
+    if not symbol:
+        return jsonify({"error": "symbol obrigatorio para WFA"}), 400
 
-        df = _download_data_safe(symbol, interval, body.get("exchange"))
-        total_bars = len(df)
+    df = _download_data_safe(symbol, interval, body.get("exchange"))
+    total_bars = len(df)
 
-        if total_bars < n_windows * 20:
-            return jsonify({
-                "error": f"Dados insuficientes ({total_bars} barras) para {n_windows} janelas. "
-                         f"Reduza o numero de janelas ou use um timeframe maior."
-            }), 400
+    if total_bars < n_windows * 20:
+        return jsonify({
+            "error": f"Dados insuficientes ({total_bars} barras) para {n_windows} janelas. "
+                     f"Reduza o numero de janelas ou use um timeframe maior."
+        }), 400
 
-        module = _load_strategy(strategy_file)
-        param_specs, numeric_keys = (
-            _extract_param_specs(module) if optimize_is_samples > 0 else ({}, [])
-        )
+    module = _load_strategy(strategy_file)
+    param_specs, numeric_keys = (
+        _extract_param_specs(module) if optimize_is_samples > 0 else ({}, [])
+    )
 
-        # Contexto de custos (fees + funding reais da exchange). Funding baixado
-        # uma vez para todo o range e reusado em cada janela.
-        cost_ctx, cost_warnings = _build_wfa_cost_ctx(df, body, cfg_dict)
+    # Contexto de custos (fees + funding reais da exchange). Funding baixado
+    # uma vez para todo o range e reusado em cada janela.
+    cost_ctx, cost_warnings = _build_wfa_cost_ctx(df, body, cfg_dict)
 
-        step_size = total_bars // n_windows
-        is_bars   = int(step_size * is_pct)
-        oos_bars  = step_size - is_bars
+    step_size = total_bars // n_windows
+    is_bars   = int(step_size * is_pct)
+    oos_bars  = step_size - is_bars
 
-        # Warm-up: barras ANTERIORES a cada janela para aquecer indicadores
-        # (MA/regime) como no trading real. Sem isso cada janela partia fria e
-        # os primeiros ~ma_length candles nao geravam sinais — em janelas OOS
-        # curtas isso consumia boa parte da janela. A avaliacao (retorno,
-        # Sharpe, trades, custos) continua estritamente dentro da janela.
-        # 400 cobre o rank de volatilidade da MM9 pullback (rolling 384).
-        warmup_bars = 400
+    # Warm-up: barras ANTERIORES a cada janela para aquecer indicadores
+    # (MA/regime) como no trading real. Sem isso cada janela partia fria e
+    # os primeiros ~ma_length candles nao geravam sinais — em janelas OOS
+    # curtas isso consumia boa parte da janela. A avaliacao (retorno,
+    # Sharpe, trades, custos) continua estritamente dentro da janela.
+    # 400 cobre o rank de volatilidade da MM9 pullback (rolling 384).
+    warmup_bars = 400
 
-        windows = []
-        for i in range(n_windows):
-            is_start  = i * step_size
-            is_end    = is_start + is_bars
-            oos_start = is_end
-            # Ultima janela absorve o resto da divisao — sem descartar as
-            # barras mais recentes.
-            oos_end   = total_bars if i == n_windows - 1 else min(oos_start + oos_bars, total_bars)
+    windows = []
+    for i in range(n_windows):
+        is_start  = i * step_size
+        is_end    = is_start + is_bars
+        oos_start = is_end
+        # Ultima janela absorve o resto da divisao — sem descartar as
+        # barras mais recentes.
+        oos_end   = total_bars if i == n_windows - 1 else min(oos_start + oos_bars, total_bars)
 
-            if oos_end <= oos_start:
-                continue
+        if oos_end <= oos_start:
+            continue
 
-            is_warm  = min(is_start, warmup_bars)
-            oos_warm = min(oos_start, warmup_bars)
-            df_is  = df.iloc[is_start - is_warm:is_end]
-            df_oos = df.iloc[oos_start - oos_warm:oos_end]
+        is_warm  = min(is_start, warmup_bars)
+        oos_warm = min(oos_start, warmup_bars)
+        df_is  = df.iloc[is_start - is_warm:is_end]
+        df_oos = df.iloc[oos_start - oos_warm:oos_end]
 
-            # IS optimization: random-sample the grid, keep best Sharpe config.
-            # Com custos ligados, ranqueia pelo Sharpe LIQUIDO — o bruto
-            # favorece configs que giram demais e morrem depois das fees.
-            if optimize_is_samples > 0 and param_specs:
-                best_sharpe = float('-inf')
-                window_cfg  = dict(cfg_dict)
-                win_rng     = np.random.default_rng(42 + i)
-                for _ in range(optimize_is_samples):
-                    trial_cfg = _random_config_from_grid(cfg_dict, param_specs, win_rng)
-                    trial_m   = _compute_window_metrics(df_is, module, trial_cfg,
-                                                        cost_ctx, eval_start=is_warm)
-                    if trial_m is None:
-                        continue
-                    if cost_ctx is not None and trial_m.get('net_sharpe') is not None:
-                        trial_sharpe = trial_m['net_sharpe']
-                    else:
-                        trial_sharpe = trial_m['sharpe'] if trial_m['sharpe'] is not None else 0.0
-                    if trial_sharpe > best_sharpe:
-                        best_sharpe = trial_sharpe
-                        window_cfg  = trial_cfg
-            else:
-                window_cfg = dict(cfg_dict)
+        # IS optimization: random-sample the grid, keep best Sharpe config.
+        # Com custos ligados, ranqueia pelo Sharpe LIQUIDO — o bruto
+        # favorece configs que giram demais e morrem depois das fees.
+        if optimize_is_samples > 0 and param_specs:
+            best_sharpe = float('-inf')
+            window_cfg  = dict(cfg_dict)
+            win_rng     = np.random.default_rng(42 + i)
+            for _ in range(optimize_is_samples):
+                trial_cfg = _random_config_from_grid(cfg_dict, param_specs, win_rng)
+                trial_m   = _compute_window_metrics(df_is, module, trial_cfg,
+                                                    cost_ctx, eval_start=is_warm)
+                if trial_m is None:
+                    continue
+                if cost_ctx is not None and trial_m.get('net_sharpe') is not None:
+                    trial_sharpe = trial_m['net_sharpe']
+                else:
+                    trial_sharpe = trial_m['sharpe'] if trial_m['sharpe'] is not None else 0.0
+                if trial_sharpe > best_sharpe:
+                    best_sharpe = trial_sharpe
+                    window_cfg  = trial_cfg
+        else:
+            window_cfg = dict(cfg_dict)
 
-            is_m  = _compute_window_metrics(df_is,  module, window_cfg, cost_ctx, eval_start=is_warm)
-            oos_m = _compute_window_metrics(df_oos, module, window_cfg, cost_ctx, eval_start=oos_warm)
+        is_m  = _compute_window_metrics(df_is,  module, window_cfg, cost_ctx, eval_start=is_warm)
+        oos_m = _compute_window_metrics(df_oos, module, window_cfg, cost_ctx, eval_start=oos_warm)
 
-            if is_m is None or oos_m is None:
-                continue
+        if is_m is None or oos_m is None:
+            continue
 
-            # Annualized return: (1 + r)^(365/days) - 1  (janela avaliada, sem warm-up)
-            is_days  = max((df.index[is_end - 1]  - df.index[is_start]).days,  1)
-            oos_days = max((df.index[oos_end - 1] - df.index[oos_start]).days, 1)
-            is_ann  = _safe(((1 + (is_m["return_pct"]  or 0) / 100) ** (365 / is_days)  - 1) * 100)
-            oos_ann = _safe(((1 + (oos_m["return_pct"] or 0) / 100) ** (365 / oos_days) - 1) * 100)
+        # Annualized return: (1 + r)^(365/days) - 1  (janela avaliada, sem warm-up)
+        is_days  = max((df.index[is_end - 1]  - df.index[is_start]).days,  1)
+        oos_days = max((df.index[oos_end - 1] - df.index[oos_start]).days, 1)
+        is_ann  = _safe(((1 + (is_m["return_pct"]  or 0) / 100) ** (365 / is_days)  - 1) * 100)
+        oos_ann = _safe(((1 + (oos_m["return_pct"] or 0) / 100) ** (365 / oos_days) - 1) * 100)
 
-            windows.append({
-                "window_idx":       i,
-                "is_start":         str(df.index[is_start])[:10],
-                "is_end":           str(df.index[is_end - 1])[:10],
-                "oos_start":        str(df.index[oos_start])[:10],
-                "oos_end":          str(df.index[oos_end - 1])[:10],
-                "is_return":        is_m["return_pct"],
-                "oos_return":       oos_m["return_pct"],
-                "is_annualized":    is_ann,
-                "oos_annualized":   oos_ann,
-                "is_sharpe":        is_m["sharpe"],
-                "oos_sharpe":       oos_m["sharpe"],
-                "is_trades":        is_m["n_trades"],
-                "oos_trades":       oos_m["n_trades"],
-                "is_equity":        is_m["equity_values"],
-                "oos_equity":       oos_m["equity_values"],
-                "is_dates":         is_m["equity_dates"],
-                "oos_dates":        oos_m["equity_dates"],
-                "optimal_params":   {k: window_cfg.get(k) for k in numeric_keys} if numeric_keys else None,
-                # Líquido (fees + funding reais da exchange); None quando custos off.
-                "is_net_return":    is_m.get("net_return_pct"),
-                "oos_net_return":   oos_m.get("net_return_pct"),
-                "oos_net_sharpe":   oos_m.get("net_sharpe"),
-                "oos_fees":         oos_m.get("fees_total"),
-                "oos_funding":      oos_m.get("funding_total"),
-            })
+        windows.append({
+            "window_idx":       i,
+            "is_start":         str(df.index[is_start])[:10],
+            "is_end":           str(df.index[is_end - 1])[:10],
+            "oos_start":        str(df.index[oos_start])[:10],
+            "oos_end":          str(df.index[oos_end - 1])[:10],
+            "is_return":        is_m["return_pct"],
+            "oos_return":       oos_m["return_pct"],
+            "is_annualized":    is_ann,
+            "oos_annualized":   oos_ann,
+            "is_sharpe":        is_m["sharpe"],
+            "oos_sharpe":       oos_m["sharpe"],
+            "is_trades":        is_m["n_trades"],
+            "oos_trades":       oos_m["n_trades"],
+            "is_equity":        is_m["equity_values"],
+            "oos_equity":       oos_m["equity_values"],
+            "is_dates":         is_m["equity_dates"],
+            "oos_dates":        oos_m["equity_dates"],
+            "optimal_params":   {k: window_cfg.get(k) for k in numeric_keys} if numeric_keys else None,
+            # Líquido (fees + funding reais da exchange); None quando custos off.
+            "is_net_return":    is_m.get("net_return_pct"),
+            "oos_net_return":   oos_m.get("net_return_pct"),
+            "oos_net_sharpe":   oos_m.get("net_sharpe"),
+            "oos_fees":         oos_m.get("fees_total"),
+            "oos_funding":      oos_m.get("funding_total"),
+        })
 
-        if not windows:
-            return jsonify({"error": "Nenhuma janela gerou trades suficientes. Tente reduzir o numero de janelas."}), 400
+    if not windows:
+        return jsonify({"error": "Nenhuma janela gerou trades suficientes. Tente reduzir o numero de janelas."}), 400
 
-        # Concatena a curva OOS reescalando cada segmento para continuidade
-        oos_dates_all  = []
-        oos_values_all = []
-        running_base   = None
+    # Concatena a curva OOS reescalando cada segmento para continuidade
+    oos_dates_all  = []
+    oos_values_all = []
+    running_base   = None
 
-        for w in windows:
-            raw_vals  = w["oos_equity"]
-            raw_dates = w["oos_dates"]
-            if not raw_vals:
-                continue
-            initial = raw_vals[0] if raw_vals[0] else 1.0
-            if running_base is None:
-                oos_dates_all.extend(raw_dates)
-                oos_values_all.extend(raw_vals)
-                running_base = next((v for v in reversed(raw_vals) if v is not None), 1.0)
-            else:
-                scale = (running_base / initial) if initial != 0 else 1.0
-                scaled = [v * scale if v is not None else None for v in raw_vals]
-                oos_dates_all.extend(raw_dates)
-                oos_values_all.extend(scaled)
-                # Usa o ultimo valor nao-nulo para evitar que running_base fique None
-                running_base = next((v for v in reversed(scaled) if v is not None), running_base)
+    for w in windows:
+        raw_vals  = w["oos_equity"]
+        raw_dates = w["oos_dates"]
+        if not raw_vals:
+            continue
+        initial = raw_vals[0] if raw_vals[0] else 1.0
+        if running_base is None:
+            oos_dates_all.extend(raw_dates)
+            oos_values_all.extend(raw_vals)
+            running_base = next((v for v in reversed(raw_vals) if v is not None), 1.0)
+        else:
+            scale = (running_base / initial) if initial != 0 else 1.0
+            scaled = [v * scale if v is not None else None for v in raw_vals]
+            oos_dates_all.extend(raw_dates)
+            oos_values_all.extend(scaled)
+            # Usa o ultimo valor nao-nulo para evitar que running_base fique None
+            running_base = next((v for v in reversed(scaled) if v is not None), running_base)
 
-        # WFE = media(oos_annualized / is_annualized) para janelas com is_annualized > 0
-        # Razoes clampadas em [-2, 5] para evitar que outliers distorcam a media
-        # WFE > 0.5 e geralmente aceitavel
-        wfe_ratios = []
-        for w in windows:
-            ia = w["is_annualized"]
-            oa = w["oos_annualized"]
-            if ia is not None and ia > 0 and oa is not None:
-                wfe_ratios.append(min(max(oa / ia, -2.0), 5.0))
+    # WFE = media(oos_annualized / is_annualized) para janelas com is_annualized > 0
+    # Razoes clampadas em [-2, 5] para evitar que outliers distorcam a media
+    # WFE > 0.5 e geralmente aceitavel
+    wfe_ratios = []
+    for w in windows:
+        ia = w["is_annualized"]
+        oa = w["oos_annualized"]
+        if ia is not None and ia > 0 and oa is not None:
+            wfe_ratios.append(min(max(oa / ia, -2.0), 5.0))
 
-        wfe = float(np.mean(wfe_ratios)) if wfe_ratios else 0.0
+    wfe = float(np.mean(wfe_ratios)) if wfe_ratios else 0.0
 
-        ann_oos = [w["oos_annualized"] for w in windows if w["oos_annualized"] is not None]
-        ann_is  = [w["is_annualized"]  for w in windows if w["is_annualized"]  is not None]
-        avg_oos_annualized = float(np.mean(ann_oos)) if ann_oos else 0.0
-        avg_is_annualized  = float(np.mean(ann_is))  if ann_is  else 0.0
-        avg_oos_return = float(np.mean([w["oos_return"] for w in windows if w["oos_return"] is not None]))
-        avg_is_return  = float(np.mean([w["is_return"]  for w in windows if w["is_return"]  is not None]))
+    ann_oos = [w["oos_annualized"] for w in windows if w["oos_annualized"] is not None]
+    ann_is  = [w["is_annualized"]  for w in windows if w["is_annualized"]  is not None]
+    avg_oos_annualized = float(np.mean(ann_oos)) if ann_oos else 0.0
+    avg_is_annualized  = float(np.mean(ann_is))  if ann_is  else 0.0
+    avg_oos_return = float(np.mean([w["oos_return"] for w in windows if w["oos_return"] is not None]))
+    avg_is_return  = float(np.mean([w["is_return"]  for w in windows if w["is_return"]  is not None]))
 
-        resp = {
-            "windows":              windows,
-            "oos_equity_curve":     {"dates": oos_dates_all, "values": oos_values_all},
-            "wfe":                  _safe(wfe),
-            "avg_oos_annualized":   _safe(avg_oos_annualized),
-            "avg_is_annualized":    _safe(avg_is_annualized),
-            "avg_oos_return":       _safe(avg_oos_return),
-            "avg_is_return":        _safe(avg_is_return),
-            "n_valid_windows":      len(windows),
-            "param_keys":           numeric_keys,
-            "costs_applied":        cost_ctx is not None,
-            "cost_warnings":        cost_warnings,
-        }
+    resp = {
+        "windows":              windows,
+        "oos_equity_curve":     {"dates": oos_dates_all, "values": oos_values_all},
+        "wfe":                  _safe(wfe),
+        "avg_oos_annualized":   _safe(avg_oos_annualized),
+        "avg_is_annualized":    _safe(avg_is_annualized),
+        "avg_oos_return":       _safe(avg_oos_return),
+        "avg_is_return":        _safe(avg_is_return),
+        "n_valid_windows":      len(windows),
+        "param_keys":           numeric_keys,
+        "costs_applied":        cost_ctx is not None,
+        "cost_warnings":        cost_warnings,
+    }
 
-        if cost_ctx is not None:
-            net_oos = [w["oos_net_return"] for w in windows if w["oos_net_return"] is not None]
-            resp.update({
-                "cost_exchange":       cost_ctx["exchange"],
-                "cost_scenario":       cost_ctx["scenario"],
-                "cost_use_funding":    cost_ctx["use_funding"],
-                "avg_oos_net_return":  _safe(float(np.mean(net_oos)) if net_oos else 0.0),
-                "total_oos_fees":      _safe(float(sum(w["oos_fees"]    or 0.0 for w in windows))),
-                "total_oos_funding":   _safe(float(sum(w["oos_funding"] or 0.0 for w in windows))),
-            })
+    if cost_ctx is not None:
+        net_oos = [w["oos_net_return"] for w in windows if w["oos_net_return"] is not None]
+        resp.update({
+            "cost_exchange":       cost_ctx["exchange"],
+            "cost_scenario":       cost_ctx["scenario"],
+            "cost_use_funding":    cost_ctx["use_funding"],
+            "avg_oos_net_return":  _safe(float(np.mean(net_oos)) if net_oos else 0.0),
+            "total_oos_fees":      _safe(float(sum(w["oos_fees"]    or 0.0 for w in windows))),
+            "total_oos_funding":   _safe(float(sum(w["oos_funding"] or 0.0 for w in windows))),
+        })
 
-        return jsonify(resp)
+    return jsonify(resp)
 
-    except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 @app.route("/api/backtest/correlation", methods=["POST"])
@@ -1570,8 +1558,9 @@ def api_backtest_correlation():
             return jsonify({"error": "Selecione pelo menos 2 ativos"}), 400
 
         cache_key = frozenset(tickers.items())
-        if cache_key in _corr_cache:
-            return jsonify(_corr_cache[cache_key])
+        hit = _corr_cache.get(cache_key)
+        if hit and time.time() - hit[0] < _CORR_TTL_S:
+            return jsonify(hit[1])
 
         # Download dados (lógica de backtest_live.py linhas 348-370)
         closes = {}
@@ -1647,7 +1636,7 @@ def api_backtest_correlation():
             "returns_aligned": returns_aligned,
             "dates": dates,
         }
-        _corr_cache[cache_key] = response
+        _corr_cache[cache_key] = (time.time(), response)
         return jsonify(response)
 
     except ImportError:
@@ -1664,103 +1653,99 @@ def api_backtest_montecarlo():
     Retorna: hist_dates, hist_values, proj_dates, p10, p50, p90, reg_line,
              sample_paths, stats
     """
+    body = request.get_json(force=True) or {}
+    equity   = body.get("equity_curve", {})
+    num_sims = max(1, int(body.get("num_sims", 300)))
+    horizon  = int(body.get("horizon", 0))   # 0 = auto
+    seed     = int(body.get("seed", 42))
+
+    dates  = equity.get("dates", [])
+    values = equity.get("values", [])
+
+    if not values or len(values) < 5:
+        return jsonify({"error": "Dados insuficientes para simulação"}), 400
+
+    arr = np.array(values, dtype=float)
+
+    # Parâmetros estatísticos
+    log_rets = np.diff(np.log(arr))
+    log_rets = log_rets[np.isfinite(log_rets)]
+    if len(log_rets) < 5:
+        return jsonify({"error": "Retornos insuficientes"}), 400
+
+    mu       = float(np.mean(log_rets))
+    variance = float(np.var(log_rets))
+    sigma    = float(np.std(log_rets))
+    S0       = float(arr[-1])
+
+    steps = max(int(len(arr) * 0.75), 30) if horizon == 0 else horizon
+
+    # GBM vetorizado com numpy
+    rng        = np.random.default_rng(seed)
+    Z          = rng.standard_normal((num_sims, steps))
+    increments = np.exp((mu - 0.5 * variance) + sigma * Z)
+    paths      = np.cumprod(increments, axis=1) * S0          # (N, steps)
+    paths      = np.hstack([np.full((num_sims, 1), S0), paths])  # prepend S0 → (N, steps+1)
+
+    # Percentis
+    p10 = np.percentile(paths, 10, axis=0).tolist()
+    p50 = np.percentile(paths, 50, axis=0).tolist()
+    p90 = np.percentile(paths, 90, axis=0).tolist()
+
+    # Regressão linear sobre a mediana (numpy.polyfit)
+    x_idx    = np.arange(steps + 1, dtype=float)
+    coeffs   = np.polyfit(x_idx, p50, 1)
+    reg_line = (coeffs[0] * x_idx + coeffs[1]).tolist()
+
+    # Amostra de caminhos para visualização (30 paths)
+    sample_n    = min(30, num_sims)
+    sample_idx  = np.linspace(0, num_sims - 1, sample_n, dtype=int)
+    sample_paths = [
+        [_safe(float(v)) for v in paths[i]]
+        for i in sample_idx
+    ]
+
+    # Datas futuras via pandas (dias úteis)
+    last_str = dates[-1] if dates else ""
     try:
-        body = request.get_json(force=True) or {}
-        equity   = body.get("equity_curve", {})
-        num_sims = max(1, int(body.get("num_sims", 300)))
-        horizon  = int(body.get("horizon", 0))   # 0 = auto
-        seed     = int(body.get("seed", 42))
+        last_ts = pd.Timestamp(last_str)
+    except Exception:
+        day, mo, yr = last_str.split("/")
+        last_ts = pd.Timestamp(f"{yr}-{mo}-{day}")
 
-        dates  = equity.get("dates", [])
-        values = equity.get("values", [])
+    future_bdays = pd.bdate_range(start=last_ts, periods=steps + 1)[1:]
+    proj_dates   = [last_ts.strftime("%Y-%m-%d")] + [
+        d.strftime("%Y-%m-%d") for d in future_bdays
+    ]
 
-        if not values or len(values) < 5:
-            return jsonify({"error": "Dados insuficientes para simulação"}), 400
+    # Janela histórica visível (≤ metade do horizonte)
+    hist_window = min(len(arr), math.ceil(steps / 2))
+    hist_dates  = dates[-hist_window:]
+    hist_values = [_safe(float(v)) for v in arr[-hist_window:]]
 
-        arr = np.array(values, dtype=float)
+    # Estatísticas finais
+    finals = paths[:, -1]
+    stats  = {
+        "median_final": _safe(float(np.percentile(finals, 50))),
+        "p10_final":    _safe(float(np.percentile(finals, 10))),
+        "p90_final":    _safe(float(np.percentile(finals, 90))),
+        "prob_profit":  _safe(float(np.mean(finals > S0) * 100)),
+        "mu_daily":     _safe(mu),
+        "sigma_daily":  _safe(sigma),
+    }
 
-        # Parâmetros estatísticos
-        log_rets = np.diff(np.log(arr))
-        log_rets = log_rets[np.isfinite(log_rets)]
-        if len(log_rets) < 5:
-            return jsonify({"error": "Retornos insuficientes"}), 400
+    return jsonify({
+        "hist_dates":   hist_dates,
+        "hist_values":  hist_values,
+        "proj_dates":   proj_dates,
+        "p10":          [_safe(v) for v in p10],
+        "p50":          [_safe(v) for v in p50],
+        "p90":          [_safe(v) for v in p90],
+        "reg_line":     [_safe(v) for v in reg_line],
+        "sample_paths": sample_paths,
+        "stats":        stats,
+    })
 
-        mu       = float(np.mean(log_rets))
-        variance = float(np.var(log_rets))
-        sigma    = float(np.std(log_rets))
-        S0       = float(arr[-1])
-
-        steps = max(int(len(arr) * 0.75), 30) if horizon == 0 else horizon
-
-        # GBM vetorizado com numpy
-        rng        = np.random.default_rng(seed)
-        Z          = rng.standard_normal((num_sims, steps))
-        increments = np.exp((mu - 0.5 * variance) + sigma * Z)
-        paths      = np.cumprod(increments, axis=1) * S0          # (N, steps)
-        paths      = np.hstack([np.full((num_sims, 1), S0), paths])  # prepend S0 → (N, steps+1)
-
-        # Percentis
-        p10 = np.percentile(paths, 10, axis=0).tolist()
-        p50 = np.percentile(paths, 50, axis=0).tolist()
-        p90 = np.percentile(paths, 90, axis=0).tolist()
-
-        # Regressão linear sobre a mediana (numpy.polyfit)
-        x_idx    = np.arange(steps + 1, dtype=float)
-        coeffs   = np.polyfit(x_idx, p50, 1)
-        reg_line = (coeffs[0] * x_idx + coeffs[1]).tolist()
-
-        # Amostra de caminhos para visualização (30 paths)
-        sample_n    = min(30, num_sims)
-        sample_idx  = np.linspace(0, num_sims - 1, sample_n, dtype=int)
-        sample_paths = [
-            [_safe(float(v)) for v in paths[i]]
-            for i in sample_idx
-        ]
-
-        # Datas futuras via pandas (dias úteis)
-        last_str = dates[-1] if dates else ""
-        try:
-            last_ts = pd.Timestamp(last_str)
-        except Exception:
-            day, mo, yr = last_str.split("/")
-            last_ts = pd.Timestamp(f"{yr}-{mo}-{day}")
-
-        future_bdays = pd.bdate_range(start=last_ts, periods=steps + 1)[1:]
-        proj_dates   = [last_ts.strftime("%Y-%m-%d")] + [
-            d.strftime("%Y-%m-%d") for d in future_bdays
-        ]
-
-        # Janela histórica visível (≤ metade do horizonte)
-        hist_window = min(len(arr), math.ceil(steps / 2))
-        hist_dates  = dates[-hist_window:]
-        hist_values = [_safe(float(v)) for v in arr[-hist_window:]]
-
-        # Estatísticas finais
-        finals = paths[:, -1]
-        stats  = {
-            "median_final": _safe(float(np.percentile(finals, 50))),
-            "p10_final":    _safe(float(np.percentile(finals, 10))),
-            "p90_final":    _safe(float(np.percentile(finals, 90))),
-            "prob_profit":  _safe(float(np.mean(finals > S0) * 100)),
-            "mu_daily":     _safe(mu),
-            "sigma_daily":  _safe(sigma),
-        }
-
-        return jsonify({
-            "hist_dates":   hist_dates,
-            "hist_values":  hist_values,
-            "proj_dates":   proj_dates,
-            "p10":          [_safe(v) for v in p10],
-            "p50":          [_safe(v) for v in p50],
-            "p90":          [_safe(v) for v in p90],
-            "reg_line":     [_safe(v) for v in reg_line],
-            "sample_paths": sample_paths,
-            "stats":        stats,
-        })
-
-    except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 @app.route("/api/backtest/validate", methods=["POST"])
@@ -1793,173 +1778,169 @@ def api_backtest_validate():
     except ImportError as e:
         return jsonify({"error": f"Módulo monte_carlo_project não encontrado: {e}"}), 500
 
+    body         = request.get_json(force=True) or {}
+    trades       = body.get("trades", [])
+    equity       = body.get("equity_curve", {})
+    metrics_in   = body.get("metrics", {})
+    n_sims       = max(50, int(body.get("n_sims", 500)))
+    n_perms      = max(50, int(body.get("n_perms", 300)))
+    seed         = int(body.get("seed", 42))
+
+    eq_values    = equity.get("values", [])
+    eq_dates     = equity.get("dates", [])
+
+    if len(trades) < 5:
+        return jsonify({"error": "São necessários pelo menos 5 trades para a validação"}), 400
+    if len(eq_values) < 10:
+        return jsonify({"error": "Equity curve insuficiente"}), 400
+
+    ic           = float(metrics_in.get("initial_capital", eq_values[0]))
+    interval_mc  = body.get("interval", "1d")
+    ann_factor   = _BARS_PER_YEAR.get(interval_mc, 252)
+    # Prefere inferir barras/ano do span real da equity (24/7 p/ cripto);
+    # a tabela fixa assume pregao de bolsa (6,5h x 252d) e subestima o
+    # Sharpe de cripto intraday em ~2,3x. Fallback: tabela.
     try:
-        body         = request.get_json(force=True) or {}
-        trades       = body.get("trades", [])
-        equity       = body.get("equity_curve", {})
-        metrics_in   = body.get("metrics", {})
-        n_sims       = max(50, int(body.get("n_sims", 500)))
-        n_perms      = max(50, int(body.get("n_perms", 300)))
-        seed         = int(body.get("seed", 42))
+        span_s = (pd.Timestamp(eq_dates[-1]) - pd.Timestamp(eq_dates[0])).total_seconds()
+        years = span_s / (365.25 * 24 * 3600)
+        if years > 0 and len(eq_values) > 1:
+            ann_factor = len(eq_values) / years
+    except Exception:
+        pass
 
-        eq_values    = equity.get("values", [])
-        eq_dates     = equity.get("dates", [])
+    # Monte Carlo
+    mc = MonteCarlo(initial_capital=ic, seed=seed, ann_factor=ann_factor)
 
-        if len(trades) < 5:
-            return jsonify({"error": "São necessários pelo menos 5 trades para a validação"}), 400
-        if len(eq_values) < 10:
-            return jsonify({"error": "Equity curve insuficiente"}), 400
+    reshuffle_r         = mc.reshuffle(trades,        n_sims=n_sims)
+    resample_r          = mc.resample(trades,         n_sims=n_sims)
+    randomized_r        = mc.randomized(trades,       n_sims=n_sims)
+    return_alteration_r = mc.return_alteration(eq_values, eq_dates, n_sims=n_sims)
 
-        ic           = float(metrics_in.get("initial_capital", eq_values[0]))
-        interval_mc  = body.get("interval", "1d")
-        ann_factor   = _BARS_PER_YEAR.get(interval_mc, 252)
-        # Prefere inferir barras/ano do span real da equity (24/7 p/ cripto);
-        # a tabela fixa assume pregao de bolsa (6,5h x 252d) e subestima o
-        # Sharpe de cripto intraday em ~2,3x. Fallback: tabela.
+    # Permutation Test (equity-curve based)
+    pt          = PermutationTestEquity(seed=seed, ann_factor=ann_factor)
+    perm_result = pt.run(eq_values, trades, n_perms=n_perms)
+
+    # Métricas originais enriquecidas
+    arr_eq  = np.array(eq_values, dtype=float)
+    rets_eq = np.diff(arr_eq) / np.where(arr_eq[:-1] != 0, arr_eq[:-1], 1.0)
+    rets_eq = rets_eq[np.isfinite(rets_eq)]
+    _std_eq = float(rets_eq.std(ddof=1)) if len(rets_eq) > 1 else 0.0
+    sharpe  = float(rets_eq.mean() / _std_eq * np.sqrt(ann_factor)) if _std_eq > 0 else 0.0
+
+    pnls      = [t.get("pnl_pct", 0) for t in trades]
+    wins      = [p for p in pnls if p > 0]
+    losses    = [p for p in pnls if p <= 0]
+    win_rate  = float(metrics_in.get("win_rate", len(wins) / len(pnls) * 100 if pnls else 0))
+    avg_win   = float(np.mean(wins))   if wins   else 0.0
+    avg_loss  = float(np.mean(losses)) if losses else 0.0
+    expectancy = win_rate / 100 * avg_win + (1 - win_rate / 100) * avg_loss
+
+    # Sortino — annualized by trades_per_year
+    _ds_sq  = [min(p, 0) ** 2 for p in pnls]
+    _ds_dev = float(np.sqrt(np.mean(_ds_sq))) if _ds_sq else 0.0
+    from datetime import datetime as _dt2
+    _sort_days = 1
+    if len(eq_dates) > 1:
         try:
-            span_s = (pd.Timestamp(eq_dates[-1]) - pd.Timestamp(eq_dates[0])).total_seconds()
-            years = span_s / (365.25 * 24 * 3600)
-            if years > 0 and len(eq_values) > 1:
-                ann_factor = len(eq_values) / years
+            _sort_days = max((_dt2.fromisoformat(str(eq_dates[-1])[:10]) - _dt2.fromisoformat(str(eq_dates[0])[:10])).days, 1)
         except Exception:
-            pass
+            _sort_days = max(len(arr_eq) - 1, 1)
+    _trades_per_year = len(pnls) / (_sort_days / 365.25) if _sort_days > 0 else len(pnls)
+    sortino = float(np.mean(pnls) / _ds_dev * np.sqrt(_trades_per_year)) if _ds_dev > 0 else 0.0
 
-        # Monte Carlo
-        mc = MonteCarlo(initial_capital=ic, seed=seed, ann_factor=ann_factor)
-
-        reshuffle_r         = mc.reshuffle(trades,        n_sims=n_sims)
-        resample_r          = mc.resample(trades,         n_sims=n_sims)
-        randomized_r        = mc.randomized(trades,       n_sims=n_sims)
-        return_alteration_r = mc.return_alteration(eq_values, eq_dates, n_sims=n_sims)
-
-        # Permutation Test (equity-curve based)
-        pt          = PermutationTestEquity(seed=seed, ann_factor=ann_factor)
-        perm_result = pt.run(eq_values, trades, n_perms=n_perms)
-
-        # Métricas originais enriquecidas
-        arr_eq  = np.array(eq_values, dtype=float)
-        rets_eq = np.diff(arr_eq) / np.where(arr_eq[:-1] != 0, arr_eq[:-1], 1.0)
-        rets_eq = rets_eq[np.isfinite(rets_eq)]
-        _std_eq = float(rets_eq.std(ddof=1)) if len(rets_eq) > 1 else 0.0
-        sharpe  = float(rets_eq.mean() / _std_eq * np.sqrt(ann_factor)) if _std_eq > 0 else 0.0
-
-        pnls      = [t.get("pnl_pct", 0) for t in trades]
-        wins      = [p for p in pnls if p > 0]
-        losses    = [p for p in pnls if p <= 0]
-        win_rate  = float(metrics_in.get("win_rate", len(wins) / len(pnls) * 100 if pnls else 0))
-        avg_win   = float(np.mean(wins))   if wins   else 0.0
-        avg_loss  = float(np.mean(losses)) if losses else 0.0
-        expectancy = win_rate / 100 * avg_win + (1 - win_rate / 100) * avg_loss
-
-        # Sortino — annualized by trades_per_year
-        _ds_sq  = [min(p, 0) ** 2 for p in pnls]
-        _ds_dev = float(np.sqrt(np.mean(_ds_sq))) if _ds_sq else 0.0
-        from datetime import datetime as _dt2
-        _sort_days = 1
-        if len(eq_dates) > 1:
-            try:
-                _sort_days = max((_dt2.fromisoformat(str(eq_dates[-1])[:10]) - _dt2.fromisoformat(str(eq_dates[0])[:10])).days, 1)
-            except Exception:
-                _sort_days = max(len(arr_eq) - 1, 1)
-        _trades_per_year = len(pnls) / (_sort_days / 365.25) if _sort_days > 0 else len(pnls)
-        sortino = float(np.mean(pnls) / _ds_dev * np.sqrt(_trades_per_year)) if _ds_dev > 0 else 0.0
-
-        # Calmar — CAGR uses calendar days derived from equity curve dates
-        ic_val = float(metrics_in.get("initial_capital", arr_eq[0] if len(arr_eq) else 1.0))
-        if len(eq_dates) > 1:
-            try:
-                _t0 = _dt2.fromisoformat(str(eq_dates[0])[:10])
-                _t1 = _dt2.fromisoformat(str(eq_dates[-1])[:10])
-                _cal_days = max((_t1 - _t0).days, 1)
-            except Exception:
-                _cal_days = max(len(arr_eq) - 1, 1)
-        else:
+    # Calmar — CAGR uses calendar days derived from equity curve dates
+    ic_val = float(metrics_in.get("initial_capital", arr_eq[0] if len(arr_eq) else 1.0))
+    if len(eq_dates) > 1:
+        try:
+            _t0 = _dt2.fromisoformat(str(eq_dates[0])[:10])
+            _t1 = _dt2.fromisoformat(str(eq_dates[-1])[:10])
+            _cal_days = max((_t1 - _t0).days, 1)
+        except Exception:
             _cal_days = max(len(arr_eq) - 1, 1)
-        cagr = ((arr_eq[-1] / ic_val) ** (365.25 / _cal_days) - 1) * 100 if ic_val > 0 else 0.0
-        max_dd_val = float(metrics_in.get("max_dd", 0)) or 0
-        calmar = float(cagr / abs(max_dd_val)) if abs(max_dd_val) > 0 else 0.0
+    else:
+        _cal_days = max(len(arr_eq) - 1, 1)
+    cagr = ((arr_eq[-1] / ic_val) ** (365.25 / _cal_days) - 1) * 100 if ic_val > 0 else 0.0
+    max_dd_val = float(metrics_in.get("max_dd", 0)) or 0
+    calmar = float(cagr / abs(max_dd_val)) if abs(max_dd_val) > 0 else 0.0
 
-        # Omega
-        gains_sum  = sum(p for p in pnls if p > 0)
-        losses_sum = abs(sum(p for p in pnls if p < 0))
-        omega = float(gains_sum / losses_sum) if losses_sum > 0 else 0.0
+    # Omega
+    gains_sum  = sum(p for p in pnls if p > 0)
+    losses_sum = abs(sum(p for p in pnls if p < 0))
+    omega = float(gains_sum / losses_sum) if losses_sum > 0 else 0.0
 
-        # Extract dd episode troughs for Sterling and Burke
-        peak_eq = np.maximum.accumulate(arr_eq)
-        dd_eq   = (arr_eq - peak_eq) / peak_eq * 100
-        _ep_tr  = []
-        _in_dd  = False
-        _ep_s   = None
-        for _ki, _vi in enumerate(dd_eq):
-            if _vi < 0 and not _in_dd:
-                _in_dd = True
-                _ep_s  = _ki
-            elif _vi >= 0 and _in_dd:
-                _in_dd = False
-                _ep_tr.append(float(dd_eq[_ep_s:_ki].min()))
-        if _in_dd and _ep_s is not None:
-            _ep_tr.append(float(dd_eq[_ep_s:].min()))
+    # Extract dd episode troughs for Sterling and Burke
+    peak_eq = np.maximum.accumulate(arr_eq)
+    dd_eq   = (arr_eq - peak_eq) / peak_eq * 100
+    _ep_tr  = []
+    _in_dd  = False
+    _ep_s   = None
+    for _ki, _vi in enumerate(dd_eq):
+        if _vi < 0 and not _in_dd:
+            _in_dd = True
+            _ep_s  = _ki
+        elif _vi >= 0 and _in_dd:
+            _in_dd = False
+            _ep_tr.append(float(dd_eq[_ep_s:_ki].min()))
+    if _in_dd and _ep_s is not None:
+        _ep_tr.append(float(dd_eq[_ep_s:].min()))
 
-        # Sterling (CAGR / mean of N worst episode troughs)
-        if _ep_tr:
-            _nw = min(5, len(_ep_tr))
-            _wt = sorted(_ep_tr)[:_nw]
-            _aw = abs(float(np.mean(_wt)))
-            sterling = float(cagr / _aw) if _aw > 0 else 0.0
-        else:
-            sterling = 0.0
+    # Sterling (CAGR / mean of N worst episode troughs)
+    if _ep_tr:
+        _nw = min(5, len(_ep_tr))
+        _wt = sorted(_ep_tr)[:_nw]
+        _aw = abs(float(np.mean(_wt)))
+        sterling = float(cagr / _aw) if _aw > 0 else 0.0
+    else:
+        sterling = 0.0
 
-        # Burke (CAGR / sqrt(sum of N worst episode trough^2))
-        if _ep_tr:
-            _nw = min(5, len(_ep_tr))
-            _wt = sorted(_ep_tr)[:_nw]
-            _bd = float(np.sqrt(np.sum(np.array(_wt) ** 2)))
-            burke = float(cagr / _bd) if _bd > 0 else 0.0
-        else:
-            burke = 0.0
+    # Burke (CAGR / sqrt(sum of N worst episode trough^2))
+    if _ep_tr:
+        _nw = min(5, len(_ep_tr))
+        _wt = sorted(_ep_tr)[:_nw]
+        _bd = float(np.sqrt(np.sum(np.array(_wt) ** 2)))
+        burke = float(cagr / _bd) if _bd > 0 else 0.0
+    else:
+        burke = 0.0
 
-        original = {
-            **{k: _safe(v) for k, v in metrics_in.items()},
-            "sharpe":     _safe(sharpe),
-            "sortino":    _safe(sortino),
-            "calmar":     _safe(calmar),
-            "omega":      _safe(omega),
-            "sterling":   _safe(sterling),
-            "burke":      _safe(burke),
-            "avg_win":    _safe(avg_win),
-            "avg_loss":   _safe(avg_loss),
-            "expectancy": _safe(expectancy),
-        }
+    original = {
+        **{k: _safe(v) for k, v in metrics_in.items()},
+        "sharpe":     _safe(sharpe),
+        "sortino":    _safe(sortino),
+        "calmar":     _safe(calmar),
+        "omega":      _safe(omega),
+        "sterling":   _safe(sterling),
+        "burke":      _safe(burke),
+        "avg_win":    _safe(avg_win),
+        "avg_loss":   _safe(avg_loss),
+        "expectancy": _safe(expectancy),
+    }
 
-        # Relatório textual
-        report_text = gen_report(
-            original=original,
-            mc_results={
-                "reshuffle":        reshuffle_r,
-                "resample":         resample_r,
-                "randomized":       randomized_r,
-                "return_alteration": return_alteration_r,
-            },
-            perm_result=perm_result,
-            strategy_label=body.get("strategy_label", "Estratégia"),
-            asset_label=body.get("asset_label", "-"),
-            period_label=f"{eq_dates[0] if eq_dates else '-'} → {eq_dates[-1] if eq_dates else '-'}",
-            n_sims=n_sims,
-        )
-
-        return jsonify({
-            "original":          original,
-            "reshuffle":         reshuffle_r,
-            "resample":          resample_r,
-            "randomized":        randomized_r,
+    # Relatório textual
+    report_text = gen_report(
+        original=original,
+        mc_results={
+            "reshuffle":        reshuffle_r,
+            "resample":         resample_r,
+            "randomized":       randomized_r,
             "return_alteration": return_alteration_r,
-            "permutation_test":  perm_result,
-            "report":            report_text,
-        })
+        },
+        perm_result=perm_result,
+        strategy_label=body.get("strategy_label", "Estratégia"),
+        asset_label=body.get("asset_label", "-"),
+        period_label=f"{eq_dates[0] if eq_dates else '-'} → {eq_dates[-1] if eq_dates else '-'}",
+        n_sims=n_sims,
+    )
 
-    except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+    return jsonify({
+        "original":          original,
+        "reshuffle":         reshuffle_r,
+        "resample":          resample_r,
+        "randomized":        randomized_r,
+        "return_alteration": return_alteration_r,
+        "permutation_test":  perm_result,
+        "report":            report_text,
+    })
+
 
 
 # Optimizer
@@ -2199,7 +2180,6 @@ def api_optimizer_progress():
 
 def _run_optimizer_compute(df_data, module, grid_raw, capital, min_trades, rank_by, top_n, symbol_label, interval_label, fixed_params=None):
     """Logica generica de otimizacao. Retorna (data_dict, error_str) — sem jsonify."""
-    import time
 
     schema = getattr(module, "CONFIG_SCHEMA", [])
     validator = getattr(module, "is_valid_config", None)
@@ -2334,9 +2314,8 @@ def _optimizer_worker(df_data, module, grid_raw, capital, min_trades, rank_by, t
             with _optimizer_lock:
                 _optimizer_progress["status"] = "done"
     except Exception as e:
-        import traceback as _tb
         _optimizer_result_store["data"] = None
-        _optimizer_result_store["error"] = str(e) + "\n" + _tb.format_exc()
+        _optimizer_result_store["error"] = str(e) + "\n" + traceback.format_exc()
         with _optimizer_lock:
             _optimizer_progress["status"] = "error"
 
@@ -2358,125 +2337,117 @@ def api_optimizer_result():
 @app.route("/api/optimizer/run", methods=["POST"])
 def api_optimizer_run():
     """Inicia a otimizacao em background e retorna imediatamente."""
-    try:
-        body = request.get_json(force=True) or {}
-        strategy_file = body.get("strategy_file", "depaula")
-        symbol = body.get("symbol", "BTC-USD")
-        symbol_label = body.get("symbol_label", symbol)
-        interval = body.get("interval", "1d")
-        grid_raw = body.get("grid", {})
-        capital = float(body.get("capital", 1000.0))
-        min_trades = int(body.get("min_trades", 5))
-        rank_by = body.get("rank_by", "Score")
-        top_n = int(body.get("top_n", 20))
+    body = request.get_json(force=True) or {}
+    strategy_file = body.get("strategy_file", "depaula")
+    symbol = body.get("symbol", "BTC-USD")
+    symbol_label = body.get("symbol_label", symbol)
+    interval = body.get("interval", "1d")
+    grid_raw = body.get("grid", {})
+    capital = float(body.get("capital", 1000.0))
+    min_trades = int(body.get("min_trades", 5))
+    rank_by = body.get("rank_by", "Score")
+    top_n = int(body.get("top_n", 20))
 
-        if body.get("data_source", "asset") != "asset":
-            return jsonify({"error": "Use upload CSV via multipart"}), 400
+    if body.get("data_source", "asset") != "asset":
+        return jsonify({"error": "Use upload CSV via multipart"}), 400
 
-        # Merge backtest config so non-grid params match the user's backtest settings.
-        # Grid combos override grid params; everything else comes from config.
-        fixed_params = dict(body.get("config", {}))
-        fixed_params["initial_capital"] = capital
-        if body.get("cycle_long_months"):
-            fixed_params["cycle_long_months"] = body["cycle_long_months"]
-        if body.get("cycle_short_months"):
-            fixed_params["cycle_short_months"] = body["cycle_short_months"]
+    # Merge backtest config so non-grid params match the user's backtest settings.
+    # Grid combos override grid params; everything else comes from config.
+    fixed_params = dict(body.get("config", {}))
+    fixed_params["initial_capital"] = capital
+    if body.get("cycle_long_months"):
+        fixed_params["cycle_long_months"] = body["cycle_long_months"]
+    if body.get("cycle_short_months"):
+        fixed_params["cycle_short_months"] = body["cycle_short_months"]
 
-        df_data = _download_data_safe(symbol, interval, body.get("exchange"))
+    df_data = _download_data_safe(symbol, interval, body.get("exchange"))
 
-        # Filtra por data se o usuario definiu start/end
-        sd = body.get("start_date")
-        ed = body.get("end_date")
-        if sd:
-            df_data = df_data[df_data.index >= pd.Timestamp(sd)]
-        if ed:
-            df_data = df_data[df_data.index <= pd.Timestamp(ed)]
-        if df_data.empty:
-            return jsonify({"error": "Nenhum dado no intervalo de datas selecionado"}), 400
+    # Filtra por data se o usuario definiu start/end
+    sd = body.get("start_date")
+    ed = body.get("end_date")
+    if sd:
+        df_data = df_data[df_data.index >= pd.Timestamp(sd)]
+    if ed:
+        df_data = df_data[df_data.index <= pd.Timestamp(ed)]
+    if df_data.empty:
+        return jsonify({"error": "Nenhum dado no intervalo de datas selecionado"}), 400
 
-        module = _load_strategy(strategy_file)
+    module = _load_strategy(strategy_file)
 
-        _optimizer_result_store["data"] = None
-        _optimizer_result_store["error"] = None
-        with _optimizer_lock:
-            _optimizer_progress["status"] = "starting"
+    _optimizer_result_store["data"] = None
+    _optimizer_result_store["error"] = None
+    with _optimizer_lock:
+        _optimizer_progress["status"] = "starting"
 
-        t = threading.Thread(
-            target=_optimizer_worker,
-            args=(df_data, module, grid_raw, capital, min_trades, rank_by, top_n,
-                  symbol_label, interval, fixed_params),
-            daemon=True,
-        )
-        t.start()
+    t = threading.Thread(
+        target=_optimizer_worker,
+        args=(df_data, module, grid_raw, capital, min_trades, rank_by, top_n,
+              symbol_label, interval, fixed_params),
+        daemon=True,
+    )
+    t.start()
 
-        return jsonify({"status": "started"})
+    return jsonify({"status": "started"})
 
-    except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 @app.route("/api/optimizer/run-csv", methods=["POST"])
 def api_optimizer_run_csv():
     """Inicia otimizacao com CSV em background e retorna imediatamente."""
-    try:
-        if "file" not in request.files:
-            return jsonify({"error": "Arquivo CSV obrigatorio"}), 400
+    if "file" not in request.files:
+        return jsonify({"error": "Arquivo CSV obrigatorio"}), 400
 
-        file_obj = request.files["file"]
-        strategy_file = request.form.get("strategy_file", "depaula")
-        grid_raw = json.loads(request.form.get("grid", "{}"))
-        capital = float(request.form.get("capital", 1000.0))
-        min_trades = int(request.form.get("min_trades", 5))
-        rank_by = request.form.get("rank_by", "Score")
-        top_n = int(request.form.get("top_n", 20))
+    file_obj = request.files["file"]
+    strategy_file = request.form.get("strategy_file", "depaula")
+    grid_raw = json.loads(request.form.get("grid", "{}"))
+    capital = float(request.form.get("capital", 1000.0))
+    min_trades = int(request.form.get("min_trades", 5))
+    rank_by = request.form.get("rank_by", "Score")
+    top_n = int(request.form.get("top_n", 20))
 
-        raw = file_obj.read()
-        df_data = None
-        for enc in ["utf-8-sig", "utf-8", "latin-1", "cp1252"]:
-            try:
-                text = raw.decode(enc)
-                df_data = pd.read_csv(
-                    io.StringIO(text), parse_dates=["Date"], index_col="Date"
-                ).sort_index()
-                break
-            except Exception:
-                continue
+    raw = file_obj.read()
+    df_data = None
+    for enc in ["utf-8-sig", "utf-8", "latin-1", "cp1252"]:
+        try:
+            text = raw.decode(enc)
+            df_data = pd.read_csv(
+                io.StringIO(text), parse_dates=["Date"], index_col="Date"
+            ).sort_index()
+            break
+        except Exception:
+            continue
 
-        if df_data is None:
-            return jsonify({"error": "Nao foi possivel ler o CSV"}), 400
+    if df_data is None:
+        return jsonify({"error": "Nao foi possivel ler o CSV"}), 400
 
-        # Merge backtest config so non-grid params match the user's settings
-        config_raw = request.form.get("config")
-        fixed_params = json.loads(config_raw) if config_raw else {}
-        fixed_params["initial_capital"] = capital
-        cycle_long = request.form.get("cycle_long_months")
-        cycle_short = request.form.get("cycle_short_months")
-        if cycle_long:
-            fixed_params["cycle_long_months"] = json.loads(cycle_long)
-        if cycle_short:
-            fixed_params["cycle_short_months"] = json.loads(cycle_short)
+    # Merge backtest config so non-grid params match the user's settings
+    config_raw = request.form.get("config")
+    fixed_params = json.loads(config_raw) if config_raw else {}
+    fixed_params["initial_capital"] = capital
+    cycle_long = request.form.get("cycle_long_months")
+    cycle_short = request.form.get("cycle_short_months")
+    if cycle_long:
+        fixed_params["cycle_long_months"] = json.loads(cycle_long)
+    if cycle_short:
+        fixed_params["cycle_short_months"] = json.loads(cycle_short)
 
-        module = _load_strategy(strategy_file)
+    module = _load_strategy(strategy_file)
 
-        _optimizer_result_store["data"] = None
-        _optimizer_result_store["error"] = None
-        with _optimizer_lock:
-            _optimizer_progress["status"] = "starting"
+    _optimizer_result_store["data"] = None
+    _optimizer_result_store["error"] = None
+    with _optimizer_lock:
+        _optimizer_progress["status"] = "starting"
 
-        t = threading.Thread(
-            target=_optimizer_worker,
-            args=(df_data, module, grid_raw, capital, min_trades, rank_by, top_n,
-                  file_obj.filename or "CSV", "-", fixed_params),
-            daemon=True,
-        )
-        t.start()
+    t = threading.Thread(
+        target=_optimizer_worker,
+        args=(df_data, module, grid_raw, capital, min_trades, rank_by, top_n,
+              file_obj.filename or "CSV", "-", fixed_params),
+        daemon=True,
+    )
+    t.start()
 
-        return jsonify({"status": "started"})
+    return jsonify({"status": "started"})
 
-    except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 
@@ -2522,386 +2493,378 @@ def api_prop_challenge_simulate():
       "num_sims": 1000
     }
     """
-    try:
-        body = request.get_json(force=True) or {}
-        strategy_file = body.get("strategy_file", "depaula") or "depaula"
-        cfg_dict = body.get("config", {})
-        account_size = float(body.get("account_size", 50000))
-        num_sims = max(100, min(int(body.get("num_sims", 1000)), 10000))
-        symbol = body.get("symbol", "")
-        symbol_label = body.get("symbol_label", symbol)
-        interval_label = body.get("interval", "1d")
+    body = request.get_json(force=True) or {}
+    strategy_file = body.get("strategy_file", "depaula") or "depaula"
+    cfg_dict = body.get("config", {})
+    account_size = float(body.get("account_size", 50000))
+    num_sims = max(100, min(int(body.get("num_sims", 1000)), 10000))
+    symbol = body.get("symbol", "")
+    symbol_label = body.get("symbol_label", symbol)
+    interval_label = body.get("interval", "1d")
 
-        if not symbol:
-            return jsonify({"error": "symbol obrigatorio"}), 400
-        if account_size <= 0:
-            return jsonify({"error": "account_size deve ser positivo"}), 400
+    if not symbol:
+        return jsonify({"error": "symbol obrigatorio"}), 400
+    if account_size <= 0:
+        return jsonify({"error": "account_size deve ser positivo"}), 400
 
-        # Forca initial_capital = account_size para o backtest
-        cfg_dict["initial_capital"] = account_size
+    # Forca initial_capital = account_size para o backtest
+    cfg_dict["initial_capital"] = account_size
 
-        df_data = _download_data_safe(symbol, interval_label, body.get("exchange"))
-        module = _load_strategy(strategy_file)
-        result_dict = module.run(df_data.copy(), cfg_dict)
+    df_data = _download_data_safe(symbol, interval_label, body.get("exchange"))
+    module = _load_strategy(strategy_file)
+    result_dict = module.run(df_data.copy(), cfg_dict)
 
-        trades = result_dict.get("trades", [])
-        if len(trades) < 5:
-            return jsonify({"error": "Poucos trades para simular (minimo 5)"}), 400
+    trades = result_dict.get("trades", [])
+    if len(trades) < 5:
+        return jsonify({"error": "Poucos trades para simular (minimo 5)"}), 400
 
-        pnl_pcts = [float(t["pnl_pct"]) for t in trades if t.get("pnl_pct") is not None]
-        if len(pnl_pcts) < 5:
-            return jsonify({"error": "Poucos trades validos para simular (minimo 5)"}), 400
+    pnl_pcts = [float(t["pnl_pct"]) for t in trades if t.get("pnl_pct") is not None]
+    if len(pnl_pcts) < 5:
+        return jsonify({"error": "Poucos trades validos para simular (minimo 5)"}), 400
 
-        valid_trades = [t for t in trades if t.get("pnl_pct") is not None]
+    valid_trades = [t for t in trades if t.get("pnl_pct") is not None]
 
-        # Sizing por risco fixo (opcional)
-        # Redimensiona cada trade para arriscar `risk_pct` da conta na
-        # distância REAL do stop: alavancagem implícita = risco ÷ stop_dist
-        # (limitada por lev_cap). Fees maker/taker e funding ESPERADO por
-        # período de 8h segurado são descontados por trade já na alavancagem
-        # nova. Substitui o módulo de custos históricos (evita dupla contagem).
-        rs = body.get("risk_sizing") or {}
-        risk_summary = None
-        pool = pnl_pcts
-        if rs.get("enabled"):
-            risk_pct = float(rs.get("risk_pct", 1.0))
-            lev_cap = max(float(rs.get("lev_cap", 10.0)), 0.01)
-            fee_maker = float(rs.get("fee_maker_pct", 0.02))
-            fee_taker = float(rs.get("fee_taker_pct", 0.055))
-            funding_8h = float(rs.get("funding_8h_pct", 0.0032))
-            maker_entry = bool(rs.get("maker_entry", True))
-            resized, levs = [], []
-            capped = skipped = 0
-            fee_drag_sum = funding_sum = 0.0
-            for t in valid_trades:
-                entry = t.get("entry_price")
-                exitp = t.get("exit_price")
-                stop = t.get("stop_price")
-                side = int(t.get("direction") or 1)
-                stop_dist = (abs(entry - stop) / entry * 100
-                             if entry and stop and entry > 0 else None)
-                if not entry or not exitp or not stop_dist or stop_dist <= 0:
-                    # sem stop definido não dá para dimensionar por risco:
-                    # mantém o pnl nativo e sinaliza
-                    skipped += 1
-                    resized.append(float(t["pnl_pct"]))
-                    levs.append(float(t.get("leverage") or 1.0))
-                    continue
-                exp = risk_pct / stop_dist
-                if exp > lev_cap:
-                    exp = lev_cap
-                    capped += 1
-                move = side * (exitp / entry - 1) * 100
-                comment = (t.get("exit_comment") or "").lower()
-                exit_maker = "maker" in comment or "alvo" in comment
-                fees = ((fee_maker if maker_entry else fee_taker)
-                        + (fee_maker if exit_maker else fee_taker)) * exp
-                hold_h = max(((t.get("exit_ts") or 0) - (t.get("entry_ts") or 0))
-                             / 3.6e6, 0.0)
-                # long paga funding médio positivo; short recebe
-                funding = funding_8h * (hold_h / 8.0) * exp * side
-                resized.append(exp * move - fees - funding)
-                levs.append(exp)
-                fee_drag_sum += fees
-                funding_sum += funding
-            pool = resized
-            n = len(resized) or 1
-            risk_summary = {
-                "applied": True, "risk_pct": risk_pct, "lev_cap": lev_cap,
-                "fee_maker_pct": fee_maker, "fee_taker_pct": fee_taker,
-                "funding_8h_pct": funding_8h, "maker_entry": maker_entry,
-                "avg_leverage": round(float(np.mean(levs)), 2),
-                "max_leverage": round(float(np.max(levs)), 2),
-                "pct_capped": round(capped / n * 100, 1),
-                "skipped": skipped,
-                "avg_fee_drag_pct": round(fee_drag_sum / n, 4),
-                "avg_funding_drag_pct": round(funding_sum / n, 4),
-                "avg_gross_pnl": round(float(np.mean(pnl_pcts)), 4),
-                "avg_net_pnl": round(float(np.mean(resized)), 4),
-                "note": ("alavancagem implícita = risco ÷ distância do stop; "
-                         "fees e funding esperados já descontados por trade — "
-                         "o módulo de custos históricos é ignorado neste modo"),
-            }
+    # Sizing por risco fixo (opcional)
+    # Redimensiona cada trade para arriscar `risk_pct` da conta na
+    # distância REAL do stop: alavancagem implícita = risco ÷ stop_dist
+    # (limitada por lev_cap). Fees maker/taker e funding ESPERADO por
+    # período de 8h segurado são descontados por trade já na alavancagem
+    # nova. Substitui o módulo de custos históricos (evita dupla contagem).
+    rs = body.get("risk_sizing") or {}
+    risk_summary = None
+    pool = pnl_pcts
+    if rs.get("enabled"):
+        risk_pct = float(rs.get("risk_pct", 1.0))
+        lev_cap = max(float(rs.get("lev_cap", 10.0)), 0.01)
+        fee_maker = float(rs.get("fee_maker_pct", 0.02))
+        fee_taker = float(rs.get("fee_taker_pct", 0.055))
+        funding_8h = float(rs.get("funding_8h_pct", 0.0032))
+        maker_entry = bool(rs.get("maker_entry", True))
+        resized, levs = [], []
+        capped = skipped = 0
+        fee_drag_sum = funding_sum = 0.0
+        for t in valid_trades:
+            entry = t.get("entry_price")
+            exitp = t.get("exit_price")
+            stop = t.get("stop_price")
+            side = int(t.get("direction") or 1)
+            stop_dist = (abs(entry - stop) / entry * 100
+                         if entry and stop and entry > 0 else None)
+            if not entry or not exitp or not stop_dist or stop_dist <= 0:
+                # sem stop definido não dá para dimensionar por risco:
+                # mantém o pnl nativo e sinaliza
+                skipped += 1
+                resized.append(float(t["pnl_pct"]))
+                levs.append(float(t.get("leverage") or 1.0))
+                continue
+            exp = risk_pct / stop_dist
+            if exp > lev_cap:
+                exp = lev_cap
+                capped += 1
+            move = side * (exitp / entry - 1) * 100
+            comment = (t.get("exit_comment") or "").lower()
+            exit_maker = "maker" in comment or "alvo" in comment
+            fees = ((fee_maker if maker_entry else fee_taker)
+                    + (fee_maker if exit_maker else fee_taker)) * exp
+            hold_h = max(((t.get("exit_ts") or 0) - (t.get("entry_ts") or 0))
+                         / 3.6e6, 0.0)
+            # long paga funding médio positivo; short recebe
+            funding = funding_8h * (hold_h / 8.0) * exp * side
+            resized.append(exp * move - fees - funding)
+            levs.append(exp)
+            fee_drag_sum += fees
+            funding_sum += funding
+        pool = resized
+        n = len(resized) or 1
+        risk_summary = {
+            "applied": True, "risk_pct": risk_pct, "lev_cap": lev_cap,
+            "fee_maker_pct": fee_maker, "fee_taker_pct": fee_taker,
+            "funding_8h_pct": funding_8h, "maker_entry": maker_entry,
+            "avg_leverage": round(float(np.mean(levs)), 2),
+            "max_leverage": round(float(np.max(levs)), 2),
+            "pct_capped": round(capped / n * 100, 1),
+            "skipped": skipped,
+            "avg_fee_drag_pct": round(fee_drag_sum / n, 4),
+            "avg_funding_drag_pct": round(funding_sum / n, 4),
+            "avg_gross_pnl": round(float(np.mean(pnl_pcts)), 4),
+            "avg_net_pnl": round(float(np.mean(resized)), 4),
+            "note": ("alavancagem implícita = risco ÷ distância do stop; "
+                     "fees e funding esperados já descontados por trade — "
+                     "o módulo de custos históricos é ignorado neste modo"),
+        }
 
-        # Custos reais da corretora (fees + funding) descontados de cada trade.
-        # Quando ligado, o Monte Carlo reamostra o pool LÍQUIDO em vez do bruto.
-        # (desativado quando o sizing por risco fixo já embute custos esperados)
-        cost_ctx, cost_warnings = ((None, [])
-                                   if risk_summary
-                                   else _build_wfa_cost_ctx(df_data, body, cfg_dict))
-        cost_summary = None
-        if cost_ctx is not None:
-            net = _net_pnl_pcts(trades, cost_ctx)
-            if net["net_pcts"]:
-                pool = net["net_pcts"]
-            cost_summary = {
-                "applied": True,
-                "exchange": cost_ctx["exchange"],
-                "scenario": cost_ctx["scenario"],
-                "use_funding": cost_ctx["use_funding"],
-                "use_maker_entry": cost_ctx["use_maker_entry"],
-                "use_maker_exit": cost_ctx["use_maker_exit"],
-                "total_fees": round(net["total_fees"], 2),
-                "total_funding": round(net["total_funding"], 2),
-                "avg_gross_pnl": round(float(np.mean(pnl_pcts)), 4),
-                "avg_net_pnl": round(float(np.mean(pool)), 4),
-                "warnings": cost_warnings,
-            }
+    # Custos reais da corretora (fees + funding) descontados de cada trade.
+    # Quando ligado, o Monte Carlo reamostra o pool LÍQUIDO em vez do bruto.
+    # (desativado quando o sizing por risco fixo já embute custos esperados)
+    cost_ctx, cost_warnings = ((None, [])
+                               if risk_summary
+                               else _build_wfa_cost_ctx(df_data, body, cfg_dict))
+    cost_summary = None
+    if cost_ctx is not None:
+        net = _net_pnl_pcts(trades, cost_ctx)
+        if net["net_pcts"]:
+            pool = net["net_pcts"]
+        cost_summary = {
+            "applied": True,
+            "exchange": cost_ctx["exchange"],
+            "scenario": cost_ctx["scenario"],
+            "use_funding": cost_ctx["use_funding"],
+            "use_maker_entry": cost_ctx["use_maker_entry"],
+            "use_maker_exit": cost_ctx["use_maker_exit"],
+            "total_fees": round(net["total_fees"], 2),
+            "total_funding": round(net["total_funding"], 2),
+            "avg_gross_pnl": round(float(np.mean(pnl_pcts)), 4),
+            "avg_net_pnl": round(float(np.mean(pool)), 4),
+            "warnings": cost_warnings,
+        }
 
-        rng = np.random.default_rng()  # semente aleatoria — cada execucao produz resultado diferente
+    rng = np.random.default_rng()  # semente aleatoria — cada execucao produz resultado diferente
 
-        # Regras do desafio
-        phase1_target = 0.10   # +10%
-        phase2_target = 0.05   # +5%
-        max_loss = -0.10       # -10% total
-        daily_max_loss = -0.05 # -5% acumulado em um dia
+    # Regras do desafio
+    phase1_target = 0.10   # +10%
+    phase2_target = 0.05   # +5%
+    max_loss = -0.10       # -10% total
+    daily_max_loss = -0.05 # -5% acumulado em um dia
 
-        # Pool de DIAS: agrupa os trades (na ordem de execucao) pelo dia de
-        # entrada e reamostra dias inteiros. Preserva a correlacao intradiaria
-        # (perdas agrupadas em dias ruins) que a reamostragem iid de trades
-        # destruia, e permite acumular a perda diaria de verdade — antes um
-        # unico trade <= -5% reprovava, mas varios trades pequenos somando -5%
-        # no mesmo dia passavam despercebidos (irreal p/ estrategia intradiaria).
-        day_groups = {}
-        for pos, (t, p) in enumerate(zip(valid_trades, pool)):
-            try:
-                key = str(pd.Timestamp(t.get("entry_date", "")).date())
-            except Exception:
-                key = f"_seq_{pos}"          # sem data parseavel: vira um "dia" proprio
-            day_groups.setdefault(key, []).append(float(p))
-        day_pool = [day_groups[k] for k in sorted(day_groups)]
+    # Pool de DIAS: agrupa os trades (na ordem de execucao) pelo dia de
+    # entrada e reamostra dias inteiros. Preserva a correlacao intradiaria
+    # (perdas agrupadas em dias ruins) que a reamostragem iid de trades
+    # destruia, e permite acumular a perda diaria de verdade — antes um
+    # unico trade <= -5% reprovava, mas varios trades pequenos somando -5%
+    # no mesmo dia passavam despercebidos (irreal p/ estrategia intradiaria).
+    day_groups = {}
+    for pos, (t, p) in enumerate(zip(valid_trades, pool)):
+        try:
+            key = str(pd.Timestamp(t.get("entry_date", "")).date())
+        except Exception:
+            key = f"_seq_{pos}"          # sem data parseavel: vira um "dia" proprio
+        day_groups.setdefault(key, []).append(float(p))
+    day_pool = [day_groups[k] for k in sorted(day_groups)]
 
-        def simulate_phase(days_pool, target, starting_balance):
-            """Simula uma fase reamostrando dias inteiros de trading.
-            Violacao da perda diaria acumulada (<= -5% no dia) reprova, como
-            nas regras reais. Retorna (passed, final_balance, curve, days_used).
-            Limitacao conhecida: drawdown intra-trade nao e observado."""
-            balance = starting_balance
-            curve = [balance]
+    def simulate_phase(days_pool, target, starting_balance):
+        """Simula uma fase reamostrando dias inteiros de trading.
+        Violacao da perda diaria acumulada (<= -5% no dia) reprova, como
+        nas regras reais. Retorna (passed, final_balance, curve, days_used).
+        Limitacao conhecida: drawdown intra-trade nao e observado."""
+        balance = starting_balance
+        curve = [balance]
 
-            max_days = 730  # limite generoso p/ estrategias lentas
-            for d in range(1, max_days + 1):
-                day = days_pool[int(rng.integers(len(days_pool)))]
-                day_start = balance
-                for trade_pnl_pct in day:
-                    balance += balance * (trade_pnl_pct / 100.0)
-                    curve.append(balance)
+        max_days = 730  # limite generoso p/ estrategias lentas
+        for d in range(1, max_days + 1):
+            day = days_pool[int(rng.integers(len(days_pool)))]
+            day_start = balance
+            for trade_pnl_pct in day:
+                balance += balance * (trade_pnl_pct / 100.0)
+                curve.append(balance)
 
-                    # Perda total acumulada desde o inicio da fase
-                    total_change = (balance - starting_balance) / starting_balance
-                    if total_change <= max_loss:
-                        return False, balance, curve, d
+                # Perda total acumulada desde o inicio da fase
+                total_change = (balance - starting_balance) / starting_balance
+                if total_change <= max_loss:
+                    return False, balance, curve, d
 
-                    # Perda diaria ACUMULADA (soma dos trades do dia)
-                    if (balance - day_start) / day_start <= daily_max_loss:
-                        return False, balance, curve, d
+                # Perda diaria ACUMULADA (soma dos trades do dia)
+                if (balance - day_start) / day_start <= daily_max_loss:
+                    return False, balance, curve, d
 
-                    # Alvo da fase
-                    if total_change >= target:
-                        return True, balance, curve, d
+                # Alvo da fase
+                if total_change >= target:
+                    return True, balance, curve, d
 
-            # Nao atingiu o alvo em max_days
-            return False, balance, curve, max_days
+        # Nao atingiu o alvo em max_days
+        return False, balance, curve, max_days
 
-        # Monte Carlo
-        phase1_pass = 0
-        phase2_pass = 0
-        both_pass = 0
-        phase1_curves = []
-        phase2_curves = []
-        phase1_results = []
-        phase2_results = []
+    # Monte Carlo
+    phase1_pass = 0
+    phase2_pass = 0
+    both_pass = 0
+    phase1_curves = []
+    phase2_curves = []
+    phase1_results = []
+    phase2_results = []
 
-        for i in range(num_sims):
-            # Fase 1
-            p1_passed, p1_balance, p1_curve, p1_days = simulate_phase(
-                day_pool, phase1_target, account_size
-            )
-            phase1_results.append({
-                "passed": p1_passed,
-                "final_balance": round(p1_balance, 2),
-                "pnl_pct": round((p1_balance - account_size) / account_size * 100, 2),
-                "num_trades": len(p1_curve) - 1,
-                "days": p1_days,
-            })
-
-            if p1_passed:
-                phase1_pass += 1
-                # Fase 2: comeca com o saldo da conta original (reseta)
-                p2_passed, p2_balance, p2_curve, p2_days = simulate_phase(
-                    day_pool, phase2_target, account_size
-                )
-                phase2_results.append({
-                    "passed": p2_passed,
-                    "final_balance": round(p2_balance, 2),
-                    "pnl_pct": round((p2_balance - account_size) / account_size * 100, 2),
-                    "num_trades": len(p2_curve) - 1,
-                    "days": p2_days,
-                })
-                if p2_passed:
-                    phase2_pass += 1
-                    both_pass += 1
-
-            # Salva ate 50 curvas de exemplo para o grafico
-            if len(phase1_curves) < 50:
-                phase1_curves.append([round(v, 2) for v in p1_curve])
-            if p1_passed and len(phase2_curves) < 50:
-                phase2_curves.append([round(v, 2) for v in p2_curve])
-
-        # Estatisticas dos trades efetivamente simulados (liquido quando custos on)
-        wins = [p for p in pool if p > 0]
-        losses = [p for p in pool if p <= 0]
-        win_rate = len(wins) / len(pool) * 100 if pool else 0
-        avg_win = float(np.mean(wins)) if wins else 0
-        avg_loss = float(np.mean(losses)) if losses else 0
-
-        # Frequencia media de trades (dias entre trades)
-        avg_days_between_trades = None
-        trade_dates = []
-        for t in trades:
-            d = t.get("entry_date", "")
-            if d:
-                try:
-                    trade_dates.append(pd.Timestamp(d))
-                except Exception:
-                    pass
-        if len(trade_dates) >= 2:
-            trade_dates.sort()
-            total_span = (trade_dates[-1] - trade_dates[0]).days
-            avg_days_between_trades = total_span / (len(trade_dates) - 1) if len(trade_dates) > 1 else None
-
-        # Tempo estimado de aprovacao por fase (em dias de calendario).
-        # A simulacao conta dias COM trade; converte para calendario pela
-        # razao span_total / dias_com_trade do historico.
-        p1_passed_trades = [r["num_trades"] for r in phase1_results if r["passed"]]
-        p2_passed_trades = [r["num_trades"] for r in phase2_results if r["passed"]]
-        p1_passed_days = [r["days"] for r in phase1_results if r["passed"]]
-        p2_passed_days = [r["days"] for r in phase2_results if r["passed"]]
-
-        p1_avg_trades = float(np.mean(p1_passed_trades)) if p1_passed_trades else None
-        p2_avg_trades = float(np.mean(p2_passed_trades)) if p2_passed_trades else None
-        p1_median_trades = float(np.median(p1_passed_trades)) if p1_passed_trades else None
-        p2_median_trades = float(np.median(p2_passed_trades)) if p2_passed_trades else None
-
-        cal_factor = 1.0
-        if len(trade_dates) >= 2 and len(day_pool) > 0:
-            span_days = max((trade_dates[-1] - trade_dates[0]).days, 1) + 1
-            cal_factor = max(span_days / len(day_pool), 1.0)
-
-        def _estimate_days(days_used):
-            if not days_used:
-                return None
-            return round(float(np.median(days_used)) * cal_factor, 1)
-
-        p1_est_days = _estimate_days(p1_passed_days)
-        p2_est_days = _estimate_days(p2_passed_days)
-        total_est_days = None
-        if p1_est_days is not None and p2_est_days is not None:
-            total_est_days = round(p1_est_days + p2_est_days, 1)
-
-        return jsonify({
-            "account_size": account_size,
-            "num_sims": num_sims,
-            "total_trades": len(trades),
-            "symbol": symbol_label,
-            "interval": interval_label,
-            "strategy": strategy_file,
-            "trade_stats": {
-                "total": len(pool),
-                "win_rate": round(win_rate, 2),
-                "avg_win": round(avg_win, 2),
-                "avg_loss": round(avg_loss, 2),
-                "avg_pnl": round(float(np.mean(pool)), 4),
-                "avg_days_between_trades": round(avg_days_between_trades, 1) if avg_days_between_trades else None,
-            },
-            "costs": cost_summary,
-            "risk_sizing": risk_summary,
-            "phase1": {
-                "target_pct": phase1_target * 100,
-                "max_loss_pct": abs(max_loss) * 100,
-                "daily_max_loss_pct": abs(daily_max_loss) * 100,
-                "passed": phase1_pass,
-                "failed": num_sims - phase1_pass,
-                "pass_rate": round(phase1_pass / num_sims * 100, 2),
-                "avg_trades_to_pass": round(p1_avg_trades, 1) if p1_avg_trades else None,
-                "median_trades_to_pass": round(p1_median_trades, 1) if p1_median_trades else None,
-                "est_days": p1_est_days,
-            },
-            "phase2": {
-                "target_pct": phase2_target * 100,
-                "max_loss_pct": abs(max_loss) * 100,
-                "daily_max_loss_pct": abs(daily_max_loss) * 100,
-                "passed": phase2_pass,
-                "failed": phase1_pass - phase2_pass,
-                "pass_rate": round(phase2_pass / phase1_pass * 100, 2) if phase1_pass > 0 else 0,
-                "avg_trades_to_pass": round(p2_avg_trades, 1) if p2_avg_trades else None,
-                "median_trades_to_pass": round(p2_median_trades, 1) if p2_median_trades else None,
-                "est_days": p2_est_days,
-            },
-            "overall": {
-                "passed": both_pass,
-                "pass_rate": round(both_pass / num_sims * 100, 2),
-                "est_total_days": total_est_days,
-            },
-            "phase1_curves": phase1_curves,
-            "phase2_curves": phase2_curves,
+    for i in range(num_sims):
+        # Fase 1
+        p1_passed, p1_balance, p1_curve, p1_days = simulate_phase(
+            day_pool, phase1_target, account_size
+        )
+        phase1_results.append({
+            "passed": p1_passed,
+            "final_balance": round(p1_balance, 2),
+            "pnl_pct": round((p1_balance - account_size) / account_size * 100, 2),
+            "num_trades": len(p1_curve) - 1,
+            "days": p1_days,
         })
 
-    except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+        if p1_passed:
+            phase1_pass += 1
+            # Fase 2: comeca com o saldo da conta original (reseta)
+            p2_passed, p2_balance, p2_curve, p2_days = simulate_phase(
+                day_pool, phase2_target, account_size
+            )
+            phase2_results.append({
+                "passed": p2_passed,
+                "final_balance": round(p2_balance, 2),
+                "pnl_pct": round((p2_balance - account_size) / account_size * 100, 2),
+                "num_trades": len(p2_curve) - 1,
+                "days": p2_days,
+            })
+            if p2_passed:
+                phase2_pass += 1
+                both_pass += 1
+
+        # Salva ate 50 curvas de exemplo para o grafico
+        if len(phase1_curves) < 50:
+            phase1_curves.append([round(v, 2) for v in p1_curve])
+        if p1_passed and len(phase2_curves) < 50:
+            phase2_curves.append([round(v, 2) for v in p2_curve])
+
+    # Estatisticas dos trades efetivamente simulados (liquido quando custos on)
+    wins = [p for p in pool if p > 0]
+    losses = [p for p in pool if p <= 0]
+    win_rate = len(wins) / len(pool) * 100 if pool else 0
+    avg_win = float(np.mean(wins)) if wins else 0
+    avg_loss = float(np.mean(losses)) if losses else 0
+
+    # Frequencia media de trades (dias entre trades)
+    avg_days_between_trades = None
+    trade_dates = []
+    for t in trades:
+        d = t.get("entry_date", "")
+        if d:
+            try:
+                trade_dates.append(pd.Timestamp(d))
+            except Exception:
+                pass
+    if len(trade_dates) >= 2:
+        trade_dates.sort()
+        total_span = (trade_dates[-1] - trade_dates[0]).days
+        avg_days_between_trades = total_span / (len(trade_dates) - 1) if len(trade_dates) > 1 else None
+
+    # Tempo estimado de aprovacao por fase (em dias de calendario).
+    # A simulacao conta dias COM trade; converte para calendario pela
+    # razao span_total / dias_com_trade do historico.
+    p1_passed_trades = [r["num_trades"] for r in phase1_results if r["passed"]]
+    p2_passed_trades = [r["num_trades"] for r in phase2_results if r["passed"]]
+    p1_passed_days = [r["days"] for r in phase1_results if r["passed"]]
+    p2_passed_days = [r["days"] for r in phase2_results if r["passed"]]
+
+    p1_avg_trades = float(np.mean(p1_passed_trades)) if p1_passed_trades else None
+    p2_avg_trades = float(np.mean(p2_passed_trades)) if p2_passed_trades else None
+    p1_median_trades = float(np.median(p1_passed_trades)) if p1_passed_trades else None
+    p2_median_trades = float(np.median(p2_passed_trades)) if p2_passed_trades else None
+
+    cal_factor = 1.0
+    if len(trade_dates) >= 2 and len(day_pool) > 0:
+        span_days = max((trade_dates[-1] - trade_dates[0]).days, 1) + 1
+        cal_factor = max(span_days / len(day_pool), 1.0)
+
+    def _estimate_days(days_used):
+        if not days_used:
+            return None
+        return round(float(np.median(days_used)) * cal_factor, 1)
+
+    p1_est_days = _estimate_days(p1_passed_days)
+    p2_est_days = _estimate_days(p2_passed_days)
+    total_est_days = None
+    if p1_est_days is not None and p2_est_days is not None:
+        total_est_days = round(p1_est_days + p2_est_days, 1)
+
+    return jsonify({
+        "account_size": account_size,
+        "num_sims": num_sims,
+        "total_trades": len(trades),
+        "symbol": symbol_label,
+        "interval": interval_label,
+        "strategy": strategy_file,
+        "trade_stats": {
+            "total": len(pool),
+            "win_rate": round(win_rate, 2),
+            "avg_win": round(avg_win, 2),
+            "avg_loss": round(avg_loss, 2),
+            "avg_pnl": round(float(np.mean(pool)), 4),
+            "avg_days_between_trades": round(avg_days_between_trades, 1) if avg_days_between_trades else None,
+        },
+        "costs": cost_summary,
+        "risk_sizing": risk_summary,
+        "phase1": {
+            "target_pct": phase1_target * 100,
+            "max_loss_pct": abs(max_loss) * 100,
+            "daily_max_loss_pct": abs(daily_max_loss) * 100,
+            "passed": phase1_pass,
+            "failed": num_sims - phase1_pass,
+            "pass_rate": round(phase1_pass / num_sims * 100, 2),
+            "avg_trades_to_pass": round(p1_avg_trades, 1) if p1_avg_trades else None,
+            "median_trades_to_pass": round(p1_median_trades, 1) if p1_median_trades else None,
+            "est_days": p1_est_days,
+        },
+        "phase2": {
+            "target_pct": phase2_target * 100,
+            "max_loss_pct": abs(max_loss) * 100,
+            "daily_max_loss_pct": abs(daily_max_loss) * 100,
+            "passed": phase2_pass,
+            "failed": phase1_pass - phase2_pass,
+            "pass_rate": round(phase2_pass / phase1_pass * 100, 2) if phase1_pass > 0 else 0,
+            "avg_trades_to_pass": round(p2_avg_trades, 1) if p2_avg_trades else None,
+            "median_trades_to_pass": round(p2_median_trades, 1) if p2_median_trades else None,
+            "est_days": p2_est_days,
+        },
+        "overall": {
+            "passed": both_pass,
+            "pass_rate": round(both_pass / num_sims * 100, 2),
+            "est_total_days": total_est_days,
+        },
+        "phase1_curves": phase1_curves,
+        "phase2_curves": phase2_curves,
+    })
+
 
 
 # Regime Detection API
 @app.route("/api/regime/detect", methods=["POST"])
 def regime_detect():
     """Detecta regimes de mercado via HMM, Markov Switching ou Change-Point."""
-    try:
-        from engine.regime_detection import detect_regimes
+    from engine.regime_detection import detect_regimes
 
-        content_type = request.content_type or ""
+    content_type = request.content_type or ""
 
-        if "multipart/form-data" in content_type:
-            file = request.files.get("file")
-            if not file:
-                return jsonify({"error": "Nenhum arquivo enviado"}), 400
-            raw = file.read().decode("utf-8-sig")
-            df = pd.read_csv(io.StringIO(raw), parse_dates=True, index_col=0)
-            params = json.loads(request.form.get("params", "{}"))
+    if "multipart/form-data" in content_type:
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"error": "Nenhum arquivo enviado"}), 400
+        raw = file.read().decode("utf-8-sig")
+        df = pd.read_csv(io.StringIO(raw), parse_dates=True, index_col=0)
+        params = json.loads(request.form.get("params", "{}"))
+    else:
+        body = request.get_json(force=True)
+        source = body.get("source", "asset")
+        params = body.get("params", {})
+
+        if source == "asset":
+            symbol = body.get("symbol")
+            interval = body.get("interval", "1d")
+            if not symbol:
+                return jsonify({"error": "Simbolo nao informado"}), 400
+            df = _download_data_safe(symbol, interval, body.get("exchange"))
         else:
-            body = request.get_json(force=True)
-            source = body.get("source", "asset")
-            params = body.get("params", {})
+            return jsonify({"error": "Fonte de dados invalida"}), 400
 
-            if source == "asset":
-                symbol = body.get("symbol")
-                interval = body.get("interval", "1d")
-                if not symbol:
-                    return jsonify({"error": "Simbolo nao informado"}), 400
-                df = _download_data_safe(symbol, interval, body.get("exchange"))
-            else:
-                return jsonify({"error": "Fonte de dados invalida"}), 400
+    method = params.get("method", "hmm")
+    n_states = int(params.get("n_states", 0))
+    features = params.get("features", ["log_return", "volatility"])
+    vol_window = int(params.get("vol_window", 20))
+    causal = bool(params.get("causal", False))
 
-        method = params.get("method", "hmm")
-        n_states = int(params.get("n_states", 0))
-        features = params.get("features", ["log_return", "volatility"])
-        vol_window = int(params.get("vol_window", 20))
-        causal = bool(params.get("causal", False))
+    result = detect_regimes(
+        df,
+        method=method,
+        n_states=n_states,
+        features=features,
+        vol_window=vol_window,
+        causal=causal,
+    )
 
-        result = detect_regimes(
-            df,
-            method=method,
-            n_states=n_states,
-            features=features,
-            vol_window=vol_window,
-            causal=causal,
-        )
+    return jsonify(result)
 
-        return jsonify(result)
-
-    except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 #  Trade Journal — registro manual de operações por estratégia
@@ -3173,7 +3136,7 @@ app.register_blueprint(automation_bp)
 from api.terminal_api import terminal_bp  # noqa: E402
 app.register_blueprint(terminal_bp)
 
-# ─── Agentes de IA (padrões do AgentHUB: loop nativo + gateways opcionais) ─
+# Agentes de IA (padrões do AgentHUB: loop nativo + gateways opcionais)
 from api.agents_api import agents_bp  # noqa: E402
 app.register_blueprint(agents_bp)
 
@@ -3194,11 +3157,7 @@ def _start_automation_runner():
     _astore.init_db()
     if _astore.list_deployments(status="running"):
         _ensure()
-# ═══════════════════════════════════════════════════════════════════════════
 # DEGEN — memecoins on-chain (GeckoTerminal)
-# ═══════════════════════════════════════════════════════════════════════════
-
-import time as _time
 import requests as _requests
 
 DEGEN_CHAINS = {
@@ -3274,7 +3233,7 @@ def degen_tokens():
         return jsonify({"error": f"Tipo inválido: {kind}"}), 400
 
     cache_key = (chain, kind)
-    now = _time.time()
+    now = time.time()
     with _degen_lock:
         cached = _degen_cache.get(cache_key)
         if cached and now - cached[0] < DEGEN_CACHE_TTL:
@@ -3527,7 +3486,7 @@ def degen_hype():
         return jsonify({"error": "Parâmetros: chain + token (address) obrigatórios"}), 400
 
     cache_key = (chain, token)
-    now = _time.time()
+    now = time.time()
     with _degen_lock:
         cached = _hype_cache.get(cache_key)
         if cached and now - cached[0] < HYPE_CACHE_TTL:
