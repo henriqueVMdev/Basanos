@@ -723,7 +723,7 @@ def run(df, params: dict) -> dict:
     else:
         burke = 0
 
-    # _fast=True: skip all display-only work (used by optimizer and WFA IS sampling)
+    # _fast=True: pula tudo que é só exibição (optimizer e amostragem IS do WFA)
     _fast = bool(params.get("_fast", False))
 
     # dates is needed by dd_episodes and equity_curve

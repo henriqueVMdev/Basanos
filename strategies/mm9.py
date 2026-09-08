@@ -355,8 +355,8 @@ def _run_backtest_mm9(df: pd.DataFrame, params: dict):
 
         bias = 1 if c[i] > slow[i] else (-1 if c[i] < slow[i] else 0)
 
-        # ── 1. FILL da ordem armada (flat) — validade de `armed_validity`
-        # candles após o gatilho (in_4=2 do TrapM; 93% dos fills em <=2) ────
+        # 1. FILL da ordem armada (flat): vale por `armed_validity` candles
+        # após o gatilho (in_4=2 do TrapM; 93% dos fills em <=2)
         # Horário em Brasília (BRT), igual ao filtro da UI.
         _hour_ok = (not hour_filter) or (brt_hour(idx[i]) in allowed_hours)
         if st["position"] == 0 and st["armed"] \
@@ -421,7 +421,7 @@ def _run_backtest_mm9(df: pd.DataFrame, params: dict):
                 if ma_stop:
                     _close_all(i, c[i], "Slow MA Stop")
 
-        # ── 3. NOVO GATILHO (substitui ordem armada; cancela se viés virou) ─
+        # 3. NOVO GATILHO (substitui ordem armada; cancela se viés virou)
         if st["position"] == 0:
             if st["armed"] and ((st["armed_dir"] == 1 and bias < 0)
                                 or (st["armed_dir"] == -1 and bias > 0)):

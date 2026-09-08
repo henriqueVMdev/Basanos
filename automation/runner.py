@@ -193,22 +193,10 @@ class Runner(threading.Thread):
                 corder = store.get_working_order(dep_id, kind="close")
                 if corder:
                     if candle["ts"] == corder["valid_candle_ts"]:
-                        res = engine.close_pnl(pos, candle["open"],
-                                               engine.TAKER, equity)
-                        store.update_position(
-                            pos["id"], status="closed",
-                            exit_price=candle["open"],
-                            exit_candle_ts=candle["ts"],
-                            exit_reason="Sinal contrário",
-                            pnl_pct=res["pnl_pct"], pnl_quote=res["pnl_quote"],
-                            fees_quote=res["fees_quote"])
-                        equity = res["new_equity"]
-                        store.update_deployment(dep_id, equity=equity)
+                        equity = self._close(
+                            dep_id, pos, candle["ts"], candle["open"],
+                            engine.TAKER, "Sinal contrário", equity)
                         store.update_order(corder["id"], status="filled")
-                        store.add_event(dep_id, "position_closed",
-                                        f"Sinal contrário @ {candle['open']:.2f} "
-                                        f"({res['pnl_pct']:+.2f}%)",
-                                        data={"pnl_pct": res["pnl_pct"]})
                         pos = None
                     elif candle["ts"] > corder["valid_candle_ts"]:
                         store.update_order(corder["id"], status="cancelled")
@@ -217,21 +205,9 @@ class Runner(threading.Thread):
             if pos:
                 exit_ = engine.check_exit(pos, candle)
                 if exit_:
-                    res = engine.close_pnl(pos, exit_["exit_price"],
-                                           exit_["exit_fee_rate"], equity)
-                    store.update_position(
-                        pos["id"], status="closed",
-                        exit_price=exit_["exit_price"],
-                        exit_candle_ts=candle["ts"],
-                        exit_reason=exit_["reason"],
-                        pnl_pct=res["pnl_pct"], pnl_quote=res["pnl_quote"],
-                        fees_quote=res["fees_quote"])
-                    equity = res["new_equity"]
-                    store.update_deployment(dep_id, equity=equity)
-                    store.add_event(dep_id, "position_closed",
-                                    f"{exit_['reason']} @ {exit_['exit_price']:.2f} "
-                                    f"({res['pnl_pct']:+.2f}%)",
-                                    data={"pnl_pct": res["pnl_pct"]})
+                    equity = self._close(
+                        dep_id, pos, candle["ts"], exit_["exit_price"],
+                        exit_["exit_fee_rate"], exit_["reason"], equity)
                     pos = None
                 else:
                     store.update_position(pos["id"], bars_held=pos["bars_held"] + 1)
@@ -262,21 +238,10 @@ class Runner(threading.Thread):
                         # mesmo candle pode estopar (igual ao backtest)
                         exit_ = engine.check_exit(pos, candle)
                         if exit_:
-                            res = engine.close_pnl(pos, exit_["exit_price"],
-                                                   exit_["exit_fee_rate"], equity)
-                            store.update_position(
-                                pos_id, status="closed",
-                                exit_price=exit_["exit_price"],
-                                exit_candle_ts=candle["ts"],
-                                exit_reason=exit_["reason"],
-                                pnl_pct=res["pnl_pct"],
-                                pnl_quote=res["pnl_quote"],
-                                fees_quote=res["fees_quote"])
-                            equity = res["new_equity"]
-                            store.update_deployment(dep_id, equity=equity)
-                            store.add_event(dep_id, "position_closed",
-                                            f"{exit_['reason']} (mesmo candle) "
-                                            f"({res['pnl_pct']:+.2f}%)")
+                            equity = self._close(
+                                dep_id, pos, candle["ts"], exit_["exit_price"],
+                                exit_["exit_fee_rate"], exit_["reason"], equity,
+                                note="(mesmo candle)")
                             pos = None
                         else:
                             # candle de entrada conta como 1 barra (j-i+1 do backtest)
@@ -325,6 +290,23 @@ class Runner(threading.Thread):
 
             store.update_deployment(dep_id, last_candle_ts=candle["ts"],
                                     last_tick_at=int(time.time() * 1000))
+
+    @staticmethod
+    def _close(dep_id, pos, candle_ts, exit_price, fee_rate, reason, equity,
+               note=None):
+        """Fecha a posição no store, registra o evento e devolve o novo equity."""
+        res = engine.close_pnl(pos, exit_price, fee_rate, equity)
+        store.update_position(
+            pos["id"], status="closed", exit_price=exit_price,
+            exit_candle_ts=candle_ts, exit_reason=reason,
+            pnl_pct=res["pnl_pct"], pnl_quote=res["pnl_quote"],
+            fees_quote=res["fees_quote"])
+        store.update_deployment(dep_id, equity=res["new_equity"])
+        store.add_event(dep_id, "position_closed",
+                        f"{reason} {note or f'@ {exit_price:.2f}'} "
+                        f"({res['pnl_pct']:+.2f}%)",
+                        data={"pnl_pct": res["pnl_pct"]})
+        return res["new_equity"]
 
     @staticmethod
     def _place_entry(dep_id, sig, valid_ts):

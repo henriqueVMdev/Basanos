@@ -183,8 +183,8 @@ def _reconcile(ex, sym, dep):
                 order_db = None
 
     # ordem órfã (na exchange, sem registro nosso): cancela por segurança
-    known = {store.get_working_order(dep_id) or {}}
-    known_ids = {o.get("exchange_order_id") for o in known if o}
+    working = store.get_working_order(dep_id)
+    known_ids = {working["exchange_order_id"]} if working else set()
     for o in ex_orders:
         if o["id"] not in known_ids:
             try:
@@ -254,7 +254,7 @@ def process(dep, df_closed, interval):
 
 
 def _place_or_amend(ex, sym, dep, order_db, sig, valid_ts):
-    from . import engine_paper  # noqa: F401 (fees ficam na exchange)
+    # fees ficam com a exchange: nada de engine_paper aqui
     dep_id = dep["id"]
     price = float(ex.price_to_precision(sym, sig["price"]))
     side_str = "buy" if sig["side"] == 1 else "sell"
